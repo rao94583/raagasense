@@ -16,6 +16,8 @@ enum Svara : int {
 std::string_view SvaraLetter(int svara);
 // "Sa", "Komal Re", ... "Tivra Ma", ... "Ni".
 std::string_view SvaraName(int svara);
+// The svara with this letter, or -1 if none has it.
+int SvaraFromLetter(std::string_view letter);
 
 // Cents above Sa (negative below), for frequencies in Hz.
 double CentsFromSa(double frequency, double sa_frequency);

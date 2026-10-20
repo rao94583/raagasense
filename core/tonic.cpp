@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 
+#include "core/svara.h"
+
 namespace raagasense {
 
 namespace {
@@ -92,6 +94,23 @@ std::vector<TonicCandidate> EstimateTonic(std::span<const SteadyNote> notes) {
   }
   std::sort(candidates.begin(), candidates.end(),
             [](const TonicCandidate& a, const TonicCandidate& b) { return a.score > b.score; });
+  return candidates;
+}
+
+std::vector<TonicCandidate> EstimateTonicForSvaras(std::span<const SteadyNote> notes, std::span<const int> svaras) {
+  std::vector<TonicCandidate> candidates = EstimateTonic(notes);
+  double total = 0;
+  for (const SteadyNote& note : notes) total += Duration(note);
+  for (TonicCandidate& candidate : candidates) {
+    double in_raag = 0;
+    for (const SteadyNote& note : notes) {
+      const int svara = NearestSvara(CentsFromSa(note.frequency, candidate.frequency)).svara;
+      if (std::find(svaras.begin(), svaras.end(), svara) != svaras.end()) in_raag += Duration(note);
+    }
+    candidate.score = in_raag / total;
+  }
+  std::stable_sort(candidates.begin(), candidates.end(),
+                   [](const TonicCandidate& a, const TonicCandidate& b) { return a.score > b.score; });
   return candidates;
 }
 

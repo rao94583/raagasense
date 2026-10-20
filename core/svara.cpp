@@ -21,6 +21,13 @@ std::string_view SvaraLetter(int svara) { return kLetters[svara]; }
 
 std::string_view SvaraName(int svara) { return kNames[svara]; }
 
+int SvaraFromLetter(std::string_view letter) {
+  for (int svara = 0; svara < 12; ++svara) {
+    if (kLetters[svara] == letter) return svara;
+  }
+  return -1;
+}
+
 double CentsFromSa(double frequency, double sa_frequency) { return 1200 * std::log2(frequency / sa_frequency); }
 
 SvaraPosition NearestSvara(double cents) {

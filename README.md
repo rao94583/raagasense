@@ -13,6 +13,7 @@ bazel run //tools:analyze -- recording.mp3                   # svara histogram
 bazel run //tools:analyze -- --steady recording.mp3          # ...of steady notes only
 bazel run //tools:analyze -- --notes recording.mp3           # steady notes, one per line
 bazel run //tools:analyze -- --tonic recording.mp3           # candidates for Sa
+bazel run //tools:analyze -- --tonic --svaras "S g m d n" recording.mp3  # ...knowing the raag
 bazel run //tools:analyze -- --csv recording.mp3             # per-frame pitch
 bazel run //tools:plot -- recording.mp3 out.png              # pitch over svara grid
 bazel run //tools:record -- --list                           # sound inputs

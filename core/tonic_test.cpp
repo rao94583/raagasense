@@ -61,5 +61,26 @@ TEST(EstimateTonic, ScoreIsTheShareOnSaAndPa) {
   EXPECT_NEAR(candidates[0].score, 2 / 3.5, 1e-9);
 }
 
+// Malkauns on D holds the same pitches as Bhoopali on A#, and A# wins on Sa
+// and Pa; knowing the svaras are Malkauns' picks D.
+TEST(EstimateTonicForSvaras, MalkaunsNotBhoopali) {
+  std::vector<SteadyNote> notes;
+  for (int i = 0; i < 3; ++i) {
+    Hold(&notes, 0, 0.8);     // S
+    Hold(&notes, 300, 0.3);   // g
+    Hold(&notes, 500, 0.6);   // m
+    Hold(&notes, 800, 1.2);   // d
+    Hold(&notes, 1000, 0.3);  // n
+  }
+  // Komal Dha, which as Sa makes these Bhoopali.
+  const double guess = CentsFromSa(EstimateTonic(notes)[0].frequency, kSa);
+  ASSERT_NEAR(guess - 1200 * std::floor(guess / 1200), 800, 5);
+  const int malkauns[] = {Svara::kSa, kKomalGa, kMa, kKomalDha, kKomalNi};
+  const std::vector<TonicCandidate> candidates = EstimateTonicForSvaras(notes, malkauns);
+  ASSERT_FALSE(candidates.empty());
+  EXPECT_NEAR(CentsFromSa(candidates[0].frequency, kSa), 0, 5);
+  EXPECT_NEAR(candidates[0].score, 1, 1e-9);
+}
+
 }  // namespace
 }  // namespace raagasense

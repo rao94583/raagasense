@@ -1,11 +1,13 @@
 // Tracks the pitch of a recording and summarizes it against a given Sa.
 //
-//   bazel run //tools:analyze -- [--sa HZ] [--steady | --notes | --tonic | --csv] RECORDING
+//   bazel run //tools:analyze -- [--sa HZ | --svaras "S g m d n"]
+//                                 [--steady | --notes | --tonic | --csv] RECORDING
 //
 // Prints how much of the voiced time falls on each svara; with --steady, how
 // much of the time spent holding steady notes does; with --notes, one line per
 // steady note; with --tonic, the candidates for Sa; with --csv, one line per
-// frame for plotting. Without --sa, uses the best candidate for Sa.
+// frame for plotting. Without --sa, uses the best candidate for Sa, which
+// --svaras, the raag's svaras in Bhatkhande letters, makes much more reliable.
 #include <unistd.h>
 
 #include <array>
@@ -27,8 +29,28 @@ namespace {
 constexpr double kMinConfidence = 0.5;
 
 int Usage() {
-  std::fprintf(stderr, "usage: analyze [--sa HZ] [--steady | --notes | --tonic | --csv] RECORDING\n");
+  std::fprintf(stderr,
+               "usage: analyze [--sa HZ | --svaras \"S g m d n\"] [--steady | --notes | --tonic | --csv] RECORDING\n");
   return 2;
+}
+
+// Svaras from letters separated by spaces or commas; empty if any is unknown.
+std::vector<int> ParseSvaras(const char* text) {
+  std::vector<int> svaras;
+  std::string letter;
+  for (const char* p = text;; ++p) {
+    if (*p && *p != ' ' && *p != ',') {
+      letter += *p;
+      continue;
+    }
+    if (!letter.empty()) {
+      const int svara = raagasense::SvaraFromLetter(letter);
+      if (svara < 0) return {};
+      svaras.push_back(svara);
+      letter.clear();
+    }
+    if (!*p) return svaras;
+  }
 }
 
 }  // namespace
@@ -39,10 +61,14 @@ int main(int argc, char** argv) {
   if (const char* directory = std::getenv("BUILD_WORKING_DIRECTORY")) chdir(directory);
   double sa = 0;
   bool csv = false, steady = false, list_notes = false, tonic = false;
+  std::vector<int> svaras;
   std::string path;
   for (int i = 1; i < argc; ++i) {
     if (!std::strcmp(argv[i], "--sa") && i + 1 < argc) {
       sa = std::atof(argv[++i]);
+    } else if (!std::strcmp(argv[i], "--svaras") && i + 1 < argc) {
+      svaras = ParseSvaras(argv[++i]);
+      if (svaras.empty()) return Usage();
     } else if (!std::strcmp(argv[i], "--csv")) {
       csv = true;
     } else if (!std::strcmp(argv[i], "--steady")) {
@@ -57,7 +83,9 @@ int main(int argc, char** argv) {
       path = argv[i];
     }
   }
-  if (path.empty() || sa < 0 || csv + steady + list_notes + tonic > 1) return Usage();
+  if (path.empty() || sa < 0 || (sa > 0 && !svaras.empty()) || csv + steady + list_notes + tonic > 1) {
+    return Usage();
+  }
 
   std::string error;
   const std::optional<AudioData> audio = ReadAudioFile(path, &error);
@@ -75,7 +103,8 @@ int main(int argc, char** argv) {
   SteadyOptions steady_options;
   steady_options.min_confidence = kMinConfidence;
   const std::vector<SteadyNote> notes = FindSteadyNotes(frames, steady_options);
-  const std::vector<TonicCandidate> candidates = EstimateTonic(notes);
+  const std::vector<TonicCandidate> candidates =
+      svaras.empty() ? EstimateTonic(notes) : EstimateTonicForSvaras(notes, svaras);
   if (tonic) {
     std::printf("frequency,score\n");
     for (const TonicCandidate& candidate : candidates) {

@@ -22,4 +22,10 @@ struct TonicCandidate {
 // Candidates for Sa, best first; empty without notes.
 std::vector<TonicCandidate> EstimateTonic(std::span<const SteadyNote> notes);
 
+// Candidates for Sa when the raag's svaras (Svara values) are known, best
+// first: the same candidates as EstimateTonic's, but each one's score is the
+// fraction of the held time on the raag's svaras taken from that Sa. Ties
+// keep EstimateTonic's order.
+std::vector<TonicCandidate> EstimateTonicForSvaras(std::span<const SteadyNote> notes, std::span<const int> svaras);
+
 }  // namespace raagasense

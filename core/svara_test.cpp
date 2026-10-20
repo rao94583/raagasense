@@ -35,6 +35,9 @@ TEST(Svara, Names) {
   EXPECT_EQ(SvaraLetter(kKomalRe), "r");
   EXPECT_EQ(SvaraLetter(kTivraMa), "M");
   EXPECT_EQ(SvaraName(kKomalDha), "Komal Dha");
+  EXPECT_EQ(SvaraFromLetter("m"), kMa);
+  EXPECT_EQ(SvaraFromLetter("M"), kTivraMa);
+  EXPECT_EQ(SvaraFromLetter("x"), -1);
 }
 
 TEST(Svara, Labels) {
