@@ -6,10 +6,12 @@ cc_library(
     name = "core",
     srcs = [
         "pitch.cpp",
+        "steady.cpp",
         "svara.cpp",
     ],
     hdrs = [
         "pitch.h",
+        "steady.h",
         "svara.h",
     ],
     visibility = ["//visibility:public"],
@@ -29,6 +31,16 @@ cc_test(
     name = "svara_test",
     size = "small",
     srcs = ["svara_test.cpp"],
+    deps = [
+        ":core",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "steady_test",
+    size = "small",
+    srcs = ["steady_test.cpp"],
     deps = [
         ":core",
         "@googletest//:gtest_main",
