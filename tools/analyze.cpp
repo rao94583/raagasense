@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 
+#include "core/melody.h"
 #include "core/pitch.h"
 #include "core/steady.h"
 #include "core/svara.h"
@@ -65,9 +66,9 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  PitchOptions options;
+  MelodyOptions options;
   options.sample_rate = audio->sample_rate;
-  PitchTracker tracker(options);
+  MelodyTracker tracker(options);
   std::vector<PitchFrame> frames;
   tracker.Push(audio->samples, &frames);
 
@@ -124,7 +125,7 @@ int main(int argc, char** argv) {
       total += note.end - note.start;
     }
   } else {
-    const double hop = options.hop_size / audio->sample_rate;
+    const double hop = frames.size() > 1 ? frames[1].time - frames[0].time : 0;
     for (const PitchFrame& frame : frames) {
       if (!frame.voiced || frame.confidence < kMinConfidence) continue;
       seconds[NearestSvara(CentsFromSa(frame.frequency, sa)).svara] += hop;

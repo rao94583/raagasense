@@ -5,12 +5,14 @@ load("@rules_cc//cc:cc_test.bzl", "cc_test")
 cc_library(
     name = "core",
     srcs = [
+        "melody.cpp",
         "pitch.cpp",
         "steady.cpp",
         "svara.cpp",
         "tonic.cpp",
     ],
     hdrs = [
+        "melody.h",
         "pitch.h",
         "steady.h",
         "svara.h",
@@ -53,6 +55,16 @@ cc_test(
     name = "tonic_test",
     size = "small",
     srcs = ["tonic_test.cpp"],
+    deps = [
+        ":core",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "melody_test",
+    size = "small",
+    srcs = ["melody_test.cpp"],
     deps = [
         ":core",
         "@googletest//:gtest_main",

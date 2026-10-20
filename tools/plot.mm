@@ -17,6 +17,7 @@
 #include <string>
 #include <vector>
 
+#include "core/melody.h"
 #include "core/pitch.h"
 #include "core/steady.h"
 #include "core/tonic.h"
@@ -58,9 +59,9 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "%s: %s\n", paths[0].c_str(), error.c_str());
     return 1;
   }
-  PitchOptions options;
+  MelodyOptions options;
   options.sample_rate = audio->sample_rate;
-  PitchTracker tracker(options);
+  MelodyTracker tracker(options);
   std::vector<PitchFrame> frames;
   tracker.Push(audio->samples, &frames);
   if (sa == 0) {

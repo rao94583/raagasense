@@ -5,6 +5,7 @@
 #include <deque>
 #include <mutex>
 
+#include "core/melody.h"
 #include "platform/audio_input.h"
 
 namespace raagasense {
@@ -19,7 +20,7 @@ constexpr double kKeepSeconds = 60;
 struct LivePitch::Impl {
   AVAudioEngine* engine = nil;
   mutable std::mutex mutex;
-  std::unique_ptr<PitchTracker> tracker;
+  std::unique_ptr<MelodyTracker> tracker;
   std::deque<PitchFrame> frames;
   double now = 0;
 
@@ -69,9 +70,9 @@ struct LivePitch::Impl {
     }
     {
       std::lock_guard lock(mutex);
-      PitchOptions options;
+      MelodyOptions options;
       options.sample_rate = format.sampleRate;
-      tracker = std::make_unique<PitchTracker>(options);
+      tracker = std::make_unique<MelodyTracker>(options);
       frames.clear();
       now = 0;
     }

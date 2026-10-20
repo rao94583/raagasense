@@ -2,7 +2,8 @@
 
 Listens to Hindustani classical music and identifies the raaga as it is
 performed. Native macOS app now, iOS later; C++20 and Objective-C++, built
-with Bazel. No machine learning: pitch tracking (YIN), the tonic, svaras and
+with Bazel. No machine learning: pitch tracking (harmonic summation, which
+copes with accompaniment; YIN for clean single voices), the tonic, svaras and
 raaga matching are all conventional signal processing and rules.
 
 ```sh
@@ -36,6 +37,7 @@ session, and the plot draws into any Core Graphics context).
 ## Status
 
 - [x] YIN pitch tracking, streaming and per frame
+- [x] Melody pitch tracking over accompaniment (harmonic summation)
 - [x] Pitch to svara, relative to a chosen Sa
 - [x] Live pitch display on macOS
 - [x] Steady notes, apart from meend and kan
