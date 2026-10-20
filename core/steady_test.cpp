@@ -102,9 +102,40 @@ TEST(FindSteadyNotes, RestSplitsANote) {
   EXPECT_EQ(FindSteadyNotes(frames).size(), 2u);
 }
 
+TEST(FindSteadyNotes, WobbleDoesNotSplitANote) {
+  std::vector<PitchFrame> frames;
+  Hold(&frames, 0.4, 700);
+  Hold(&frames, 0.05, 780);
+  Hold(&frames, 0.4, 710);
+  const std::vector<SteadyNote> notes = FindSteadyNotes(frames);
+  ASSERT_EQ(notes.size(), 1u);
+  EXPECT_NEAR(Cents(notes[0]), 705, 1);
+}
+
+// Accompaniment can make the tracker report a frame an octave or two off.
+TEST(FindSteadyNotes, OctaveErrorsAreFixed) {
+  std::vector<PitchFrame> frames;
+  Hold(&frames, 1.0, 700);
+  for (size_t i = 3; i < frames.size(); i += 7) frames[i].frequency *= 2;
+  frames[20].frequency /= 4;
+  const std::vector<SteadyNote> notes = FindSteadyNotes(frames);
+  ASSERT_EQ(notes.size(), 1u);
+  EXPECT_NEAR(Cents(notes[0]), 700, 0.5);
+  EXPECT_GT(notes[0].end - notes[0].start, 0.95);
+}
+
+TEST(FindSteadyNotes, OctaveLeapIsKept) {
+  std::vector<PitchFrame> frames;
+  Hold(&frames, 0.5, 0);
+  Hold(&frames, 0.5, 1200);
+  const std::vector<SteadyNote> notes = FindSteadyNotes(frames);
+  ASSERT_EQ(notes.size(), 2u);
+  EXPECT_NEAR(Cents(notes[1]), 1200, 0.5);
+}
+
 TEST(FindSteadyNotes, TooShortIsNotANote) {
   std::vector<PitchFrame> frames;
-  Hold(&frames, 0.15, 500);
+  Hold(&frames, 0.1, 500);
   EXPECT_TRUE(FindSteadyNotes(frames).empty());
 }
 

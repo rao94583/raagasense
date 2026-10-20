@@ -8,18 +8,21 @@ raaga matching are all conventional signal processing and rules.
 ```sh
 bazel test //...
 bazel run //app/macos:RaagaSense
-bazel run //tools:analyze -- --sa 146.83 recording.mp3         # svara histogram
-bazel run //tools:analyze -- --sa 146.83 --steady recording.mp3  # ...of steady notes only
-bazel run //tools:analyze -- --sa 146.83 --notes recording.mp3   # steady notes, one per line
-bazel run //tools:analyze -- --sa 146.83 --csv recording.mp3   # per-frame pitch
-bazel run //tools:plot -- --sa 146.83 recording.mp3 out.png    # pitch over svara grid
+bazel run //tools:analyze -- recording.mp3                   # svara histogram
+bazel run //tools:analyze -- --steady recording.mp3          # ...of steady notes only
+bazel run //tools:analyze -- --notes recording.mp3           # steady notes, one per line
+bazel run //tools:analyze -- --tonic recording.mp3           # candidates for Sa
+bazel run //tools:analyze -- --csv recording.mp3             # per-frame pitch
+bazel run //tools:plot -- recording.mp3 out.png              # pitch over svara grid
 ```
+
+The tools estimate Sa from the recording; `--sa HZ` sets it instead.
 
 ## Layout
 
 | Directory | Contents | Depends on |
 |---|---|---|
-| `core/` | Pitch tracking, svaras, steady notes; later tonic detection and raaga matching | C++ standard library only |
+| `core/` | Pitch tracking, svaras, steady notes, tonic; later raaga matching | C++ standard library only |
 | `platform/` | Audio files, the microphone, the pitch plot | Core Audio, AVFoundation, Core Graphics; no AppKit or UIKit |
 | `app/macos/` | The macOS app | AppKit |
 | `tools/` | Command-line tools for working on recordings | macOS |
@@ -34,7 +37,8 @@ session, and the plot draws into any Core Graphics context).
 - [x] Pitch to svara, relative to a chosen Sa
 - [x] Live pitch display on macOS
 - [x] Steady notes, apart from meend and kan
-- [ ] Tonic (Sa) detection
+- [x] Tonic (Sa) estimate from held Sa and Pa, in the tools
+- [ ] Tonic for raagas without Pa, and in the app
 - [ ] Andolan, and meends as transitions between svaras
 - [ ] Raaga knowledge base and scoring
 - [ ] iOS app

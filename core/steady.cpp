@@ -9,6 +9,9 @@ namespace {
 
 // Pitches are worked on in cents from this arbitrary reference.
 constexpr double kReference = 440;
+// A frame's pitch is checked against the median of the frames this many
+// seconds either side of it.
+constexpr double kOctaveCheckSeconds = 0.05;
 
 struct Point {
   double time;
@@ -38,6 +41,22 @@ double Slope(std::span<const Point> points) {
     variance += (point.time - mean_time) * (point.time - mean_time);
   }
   return variance > 0 ? covariance / variance : 0;
+}
+
+// Moves each point by whole octaves to the octave nearest its neighbors'
+// median, when it's more than half an octave away from it.
+void FixOctaveErrors(std::vector<Point>* points) {
+  std::vector<Point> fixed = *points;
+  size_t first = 0, last = 0;
+  for (size_t i = 0; i < points->size(); ++i) {
+    const double time = (*points)[i].time;
+    while ((*points)[first].time < time - kOctaveCheckSeconds) ++first;
+    while (last < points->size() && (*points)[last].time <= time + kOctaveCheckSeconds) ++last;
+    const double median = Median(std::span(*points).subspan(first, last - first));
+    const double offset = fixed[i].cents - median;
+    if (std::abs(offset) > 600) fixed[i].cents -= 1200 * std::round(offset / 1200);
+  }
+  *points = std::move(fixed);
 }
 
 // Finds the notes in a run of voiced points with no long gaps.
@@ -73,17 +92,35 @@ void FindInRun(std::span<const Point> run, const SteadyOptions& options, std::ve
 }  // namespace
 
 std::vector<SteadyNote> FindSteadyNotes(std::span<const PitchFrame> frames, const SteadyOptions& options) {
-  std::vector<SteadyNote> notes;
-  std::vector<Point> run;
+  std::vector<Point> points;
   for (const PitchFrame& frame : frames) {
     if (!frame.voiced || frame.confidence < options.min_confidence || frame.frequency <= 0) continue;
-    if (!run.empty() && frame.time - run.back().time > options.max_gap) {
-      FindInRun(run, options, &notes);
-      run.clear();
-    }
-    run.push_back({frame.time, 1200 * std::log2(frame.frequency / kReference)});
+    points.push_back({frame.time, 1200 * std::log2(frame.frequency / kReference)});
   }
-  FindInRun(run, options, &notes);
+  FixOctaveErrors(&points);
+
+  std::vector<SteadyNote> found;
+  size_t start = 0;
+  for (size_t i = 1; i <= points.size(); ++i) {
+    if (i == points.size() || points[i].time - points[i - 1].time > options.max_gap) {
+      FindInRun(std::span(points).subspan(start, i - start), options, &found);
+      start = i;
+    }
+  }
+
+  std::vector<SteadyNote> notes;
+  for (const SteadyNote& note : found) {
+    if (!notes.empty() && note.start - notes.back().end <= options.merge_gap &&
+        std::abs(1200 * std::log2(note.frequency / notes.back().frequency)) <= options.merge_cents) {
+      // The merged pitch is the two pitches' mean in cents, weighted by duration.
+      SteadyNote& previous = notes.back();
+      const double a = previous.end - previous.start, b = note.end - note.start;
+      previous.frequency = std::exp2((a * std::log2(previous.frequency) + b * std::log2(note.frequency)) / (a + b));
+      previous.end = note.end;
+    } else {
+      notes.push_back(note);
+    }
+  }
   return notes;
 }
 

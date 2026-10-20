@@ -2,6 +2,8 @@
 // drawing code as the apps.
 //
 //   bazel run //tools:plot -- [--sa HZ] [--width PIXELS] RECORDING OUTPUT.png
+//
+// Without --sa, estimates Sa from the recording.
 #import <CoreGraphics/CoreGraphics.h>
 #import <Foundation/Foundation.h>
 #import <ImageIO/ImageIO.h>
@@ -14,6 +16,8 @@
 #include <vector>
 
 #include "core/pitch.h"
+#include "core/steady.h"
+#include "core/tonic.h"
 #include "platform/audio_file.h"
 #include "platform/pitch_plot.h"
 
@@ -28,7 +32,7 @@ int Usage() {
 
 int main(int argc, char** argv) {
   using namespace raagasense;
-  double sa = 138.59;
+  double sa = 0;
   int width = 2000;
   std::vector<std::string> paths;
   for (int i = 1; i < argc; ++i) {
@@ -42,7 +46,7 @@ int main(int argc, char** argv) {
       paths.push_back(argv[i]);
     }
   }
-  if (paths.size() != 2 || sa <= 0 || width <= 0) return Usage();
+  if (paths.size() != 2 || sa < 0 || width <= 0) return Usage();
 
   std::string error;
   const std::optional<AudioData> audio = ReadAudioFile(paths[0], &error);
@@ -55,6 +59,15 @@ int main(int argc, char** argv) {
   PitchTracker tracker(options);
   std::vector<PitchFrame> frames;
   tracker.Push(audio->samples, &frames);
+  if (sa == 0) {
+    const std::vector<TonicCandidate> candidates = EstimateTonic(FindSteadyNotes(frames));
+    if (candidates.empty()) {
+      std::fprintf(stderr, "%s: no steady notes to find Sa from; give it with --sa\n", paths[0].c_str());
+      return 1;
+    }
+    sa = candidates[0].frequency;
+    std::fprintf(stderr, "Sa = %.2f Hz (estimated)\n", sa);
+  }
 
   PitchPlot plot;
   plot.sa_frequency = sa;

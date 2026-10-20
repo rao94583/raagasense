@@ -19,7 +19,9 @@ struct PitchOptions {
   double min_frequency = 70;
   double max_frequency = 1100;
   // YIN's absolute threshold on the cumulative mean normalized difference.
-  double threshold = 0.15;
+  // Higher than the paper's 0.1 to 0.15, so that a voice over accompaniment
+  // still counts as voiced.
+  double threshold = 0.25;
   // Frames quieter than this RMS level are unvoiced.
   double silence_rms = 1e-3;
 };

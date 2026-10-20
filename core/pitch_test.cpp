@@ -47,6 +47,17 @@ TEST(EstimatePitch, WeakFundamental) {
   EXPECT_NEAR(frame.frequency, 146.83, 0.5);
 }
 
+// A voice with a quieter instrument playing another note; at the paper's
+// threshold of 0.15 this frame is unvoiced.
+TEST(EstimatePitch, VoiceOverAccompaniment) {
+  std::vector<float> mix = Tone(233.08, {1, 0.8, 0.5, 0.3}, 2048);
+  const std::vector<float> harmonium = Tone(293.66, {1, 0.7, 0.5, 0.4, 0.3}, 2048);
+  for (size_t i = 0; i < mix.size(); ++i) mix[i] += 0.4f * harmonium[i];
+  const PitchFrame frame = EstimatePitch(mix, Options());
+  EXPECT_TRUE(frame.voiced);
+  EXPECT_NEAR(frame.frequency, 233.08, 1);
+}
+
 TEST(EstimatePitch, SilenceIsUnvoiced) {
   const PitchFrame frame = EstimatePitch(std::vector<float>(2048, 0.0f), Options());
   EXPECT_FALSE(frame.voiced);
