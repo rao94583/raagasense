@@ -6,6 +6,8 @@
 // much of the time spent holding steady notes does; with --notes, one line per
 // steady note; with --tonic, the candidates for Sa; with --csv, one line per
 // frame for plotting. Without --sa, uses the best candidate for Sa.
+#include <unistd.h>
+
 #include <array>
 #include <cstdio>
 #include <cstdlib>
@@ -32,6 +34,8 @@ int Usage() {
 
 int main(int argc, char** argv) {
   using namespace raagasense;
+  // Under bazel run, make relative paths relative to where it was run.
+  if (const char* directory = std::getenv("BUILD_WORKING_DIRECTORY")) chdir(directory);
   double sa = 0;
   bool csv = false, steady = false, list_notes = false, tonic = false;
   std::string path;

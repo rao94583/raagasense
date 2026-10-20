@@ -1,13 +1,11 @@
 #include "platform/live_pitch.h"
 
 #import <AVFoundation/AVFoundation.h>
-#if !TARGET_OS_IPHONE
-#import <AudioToolbox/AudioToolbox.h>
-#import <CoreAudio/CoreAudio.h>
-#endif
 
 #include <deque>
 #include <mutex>
+
+#include "platform/audio_input.h"
 
 namespace raagasense {
 
@@ -16,64 +14,7 @@ namespace {
 // How much history Recent() can return.
 constexpr double kKeepSeconds = 60;
 
-#if !TARGET_OS_IPHONE
-
-AudioObjectPropertyAddress GlobalProperty(AudioObjectPropertySelector selector) {
-  return {selector, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain};
-}
-
-std::string StringProperty(AudioObjectID object, AudioObjectPropertySelector selector) {
-  const AudioObjectPropertyAddress address = GlobalProperty(selector);
-  CFStringRef value = nullptr;
-  UInt32 size = sizeof value;
-  if (AudioObjectGetPropertyData(object, &address, 0, nullptr, &size, &value) != noErr || !value) return "";
-  NSString* string = (__bridge_transfer NSString*)value;
-  return string.UTF8String ?: "";
-}
-
-bool HasInputStreams(AudioDeviceID device) {
-  const AudioObjectPropertyAddress address = {kAudioDevicePropertyStreams, kAudioObjectPropertyScopeInput,
-                                              kAudioObjectPropertyElementMain};
-  UInt32 size = 0;
-  return AudioObjectGetPropertyDataSize(device, &address, 0, nullptr, &size) == noErr && size > 0;
-}
-
-// kAudioObjectUnknown when no connected device has this id.
-AudioDeviceID DeviceForInputId(const std::string& input_id) {
-  const AudioObjectPropertyAddress address = GlobalProperty(kAudioHardwarePropertyTranslateUIDToDevice);
-  CFStringRef uid = (__bridge CFStringRef) @(input_id.c_str());
-  AudioDeviceID device = kAudioObjectUnknown;
-  UInt32 size = sizeof device;
-  if (AudioObjectGetPropertyData(kAudioObjectSystemObject, &address, sizeof uid, &uid, &size, &device) != noErr) {
-    return kAudioObjectUnknown;
-  }
-  return device;
-}
-
-#endif
-
 }  // namespace
-
-std::vector<AudioInput> AudioInputs() {
-  std::vector<AudioInput> inputs;
-#if !TARGET_OS_IPHONE
-  const AudioObjectPropertyAddress address = GlobalProperty(kAudioHardwarePropertyDevices);
-  UInt32 size = 0;
-  if (AudioObjectGetPropertyDataSize(kAudioObjectSystemObject, &address, 0, nullptr, &size) != noErr) return inputs;
-  std::vector<AudioDeviceID> devices(size / sizeof(AudioDeviceID));
-  if (AudioObjectGetPropertyData(kAudioObjectSystemObject, &address, 0, nullptr, &size, devices.data()) != noErr) {
-    return inputs;
-  }
-  devices.resize(size / sizeof(AudioDeviceID));
-  for (AudioDeviceID device : devices) {
-    if (!HasInputStreams(device)) continue;
-    AudioInput input{StringProperty(device, kAudioDevicePropertyDeviceUID),
-                     StringProperty(device, kAudioObjectPropertyName)};
-    if (!input.id.empty()) inputs.push_back(input);
-  }
-#endif
-  return inputs;
-}
 
 struct LivePitch::Impl {
   AVAudioEngine* engine = nil;
@@ -112,22 +53,16 @@ struct LivePitch::Impl {
 #endif
     engine = [[AVAudioEngine alloc] init];
     AVAudioInputNode* input = engine.inputNode;
-#if !TARGET_OS_IPHONE
-    // The device has to be set before the input's format is read.
     if (!input_id.empty()) {
-      AudioDeviceID device = DeviceForInputId(input_id);
-      if (device == kAudioObjectUnknown) {
+      const std::string error = UseAudioInput(input.audioUnit, input_id);
+      if (!error.empty()) {
         engine = nil;
-        return "The chosen sound input isn't connected.";
-      }
-      if (AudioUnitSetProperty(input.audioUnit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
-                               &device, sizeof device) != noErr) {
-        engine = nil;
-        return "Can't switch to the chosen sound input.";
+        return error;
       }
     }
-#endif
-    AVAudioFormat* format = [input outputFormatForBus:0];
+    // The device's own format: after switching devices, the output bus can
+    // still report the previous one's channels and rate.
+    AVAudioFormat* format = [input inputFormatForBus:0];
     if (format.sampleRate == 0 || format.channelCount == 0) {
       engine = nil;
       return "No audio input device is available.";

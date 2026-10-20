@@ -30,3 +30,18 @@ cc_binary(
     name = "plot",
     deps = [":plot_main"],
 )
+
+objc_library(
+    name = "record_main",
+    srcs = ["record.mm"],
+    sdk_frameworks = [
+        "AVFoundation",
+        "Foundation",
+    ],
+    deps = ["//platform:audio_input"],
+)
+
+cc_binary(
+    name = "record",
+    deps = [":record_main"],
+)

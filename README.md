@@ -14,6 +14,8 @@ bazel run //tools:analyze -- --notes recording.mp3           # steady notes, one
 bazel run //tools:analyze -- --tonic recording.mp3           # candidates for Sa
 bazel run //tools:analyze -- --csv recording.mp3             # per-frame pitch
 bazel run //tools:plot -- recording.mp3 out.png              # pitch over svara grid
+bazel run //tools:record -- --list                           # sound inputs
+bazel run //tools:record -- --input M2 --channels 3,4 recordings/yaman.m4a
 ```
 
 The tools estimate Sa from the recording; `--sa HZ` sets it instead.
@@ -23,7 +25,7 @@ The tools estimate Sa from the recording; `--sa HZ` sets it instead.
 | Directory | Contents | Depends on |
 |---|---|---|
 | `core/` | Pitch tracking, svaras, steady notes, tonic; later raaga matching | C++ standard library only |
-| `platform/` | Audio files, the microphone, the pitch plot | Core Audio, AVFoundation, Core Graphics; no AppKit or UIKit |
+| `platform/` | Audio files, sound inputs, the microphone, the pitch plot | Core Audio, AVFoundation, Core Graphics; no AppKit or UIKit |
 | `app/macos/` | The macOS app | AppKit |
 | `tools/` | Command-line tools for working on recordings | macOS |
 

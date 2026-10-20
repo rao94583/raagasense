@@ -16,17 +16,30 @@ objc_library(
 )
 
 objc_library(
-    name = "live_pitch",
-    srcs = ["live_pitch.mm"],
-    hdrs = ["live_pitch.h"],
+    name = "audio_input",
+    srcs = ["audio_input.mm"],
+    hdrs = ["audio_input.h"],
     sdk_frameworks = [
-        "AVFoundation",
         "AudioToolbox",
         "CoreAudio",
         "Foundation",
     ],
     visibility = ["//visibility:public"],
-    deps = ["//core"],
+)
+
+objc_library(
+    name = "live_pitch",
+    srcs = ["live_pitch.mm"],
+    hdrs = ["live_pitch.h"],
+    sdk_frameworks = [
+        "AVFoundation",
+        "Foundation",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":audio_input",
+        "//core",
+    ],
 )
 
 objc_library(

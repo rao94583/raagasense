@@ -6,6 +6,7 @@
 #include <memory>
 
 #import "app/macos/pitch_view.h"
+#include "platform/audio_input.h"
 #include "platform/live_pitch.h"
 
 namespace {

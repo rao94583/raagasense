@@ -9,6 +9,8 @@
 #import <ImageIO/ImageIO.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
+#include <unistd.h>
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -32,6 +34,8 @@ int Usage() {
 
 int main(int argc, char** argv) {
   using namespace raagasense;
+  // Under bazel run, make relative paths relative to where it was run.
+  if (const char* directory = std::getenv("BUILD_WORKING_DIRECTORY")) chdir(directory);
   double sa = 0;
   int width = 2000;
   std::vector<std::string> paths;

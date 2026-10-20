@@ -10,17 +10,6 @@
 
 namespace raagasense {
 
-// A sound input device the system offers.
-struct AudioInput {
-  // Stable across launches and reconnections.
-  std::string id;
-  std::string name;
-};
-
-// The devices that can record, in the system's order. Empty on iOS, where the
-// audio session picks the input.
-std::vector<AudioInput> AudioInputs();
-
 class LivePitch {
  public:
   LivePitch();
@@ -29,7 +18,8 @@ class LivePitch {
   LivePitch& operator=(const LivePitch&) = delete;
 
   // Asks for microphone access if needed and starts listening to the input
-  // with this id, or to the system default when it's empty. Calls done on the
+  // with this id (see AudioInputs), or to the system default when it's
+  // empty. Calls done on the
   // main thread with an empty string on success, or the reason it failed.
   void Start(const std::string& input_id, std::function<void(const std::string& error)> done);
   void Stop();
