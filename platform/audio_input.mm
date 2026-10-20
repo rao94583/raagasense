@@ -37,6 +37,22 @@ int InputChannels(AudioDeviceID device) {
   return channels;
 }
 
+std::vector<std::string> InputChannelNames(AudioDeviceID device, int channels) {
+  std::vector<std::string> names;
+  for (int channel = 1; channel <= channels; ++channel) {
+    const AudioObjectPropertyAddress address = {kAudioObjectPropertyElementName, kAudioObjectPropertyScopeInput,
+                                                static_cast<AudioObjectPropertyElement>(channel)};
+    CFStringRef value = nullptr;
+    UInt32 size = sizeof value;
+    if (AudioObjectGetPropertyData(device, &address, 0, nullptr, &size, &value) != noErr || !value) return {};
+    NSString* name = (__bridge_transfer NSString*)value;
+    // Some devices name a channel only by its number.
+    if (name.length == 0 || name.integerValue == channel) return {};
+    names.push_back(name.UTF8String);
+  }
+  return names;
+}
+
 // kAudioObjectUnknown when no connected device has this id.
 AudioDeviceID DeviceForInputId(const std::string& input_id) {
   const AudioObjectPropertyAddress address = GlobalProperty(kAudioHardwarePropertyTranslateUIDToDevice);
@@ -68,7 +84,8 @@ std::vector<AudioInput> AudioInputs() {
     const int channels = InputChannels(device);
     if (channels == 0) continue;
     AudioInput input{StringProperty(device, kAudioDevicePropertyDeviceUID),
-                     StringProperty(device, kAudioObjectPropertyName), channels};
+                     StringProperty(device, kAudioObjectPropertyName), channels,
+                     InputChannelNames(device, channels)};
     if (!input.id.empty()) inputs.push_back(input);
   }
 #endif

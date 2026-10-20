@@ -34,7 +34,10 @@ int Usage() {
 
 int List() {
   for (const raagasense::AudioInput& input : raagasense::AudioInputs()) {
-    std::printf("%-40s %d channel%s\n", input.name.c_str(), input.channels, input.channels == 1 ? "" : "s");
+    std::printf("%s: %d channel%s\n", input.name.c_str(), input.channels, input.channels == 1 ? "" : "s");
+    for (size_t i = 0; i < input.channel_names.size(); ++i) {
+      std::printf("  %zu  %s\n", i + 1, input.channel_names[i].c_str());
+    }
   }
   return 0;
 }

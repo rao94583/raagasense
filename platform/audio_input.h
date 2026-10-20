@@ -14,6 +14,9 @@ struct AudioInput {
   std::string id;
   std::string name;
   int channels = 0;
+  // The device's names for its channels, such as "Loopback 1"; empty where
+  // it doesn't name them.
+  std::vector<std::string> channel_names;
 };
 
 // The devices that can record, in the system's order. Empty on iOS, where the
