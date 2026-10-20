@@ -1,0 +1,67 @@
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_cc//cc:objc_library.bzl", "objc_library")
+
+# Apple-framework glue shared by the macOS and iOS apps: nothing here uses
+# AppKit or UIKit. Headers are plain C++.
+
+objc_library(
+    name = "audio_file",
+    srcs = ["audio_file.mm"],
+    hdrs = ["audio_file.h"],
+    sdk_frameworks = [
+        "AudioToolbox",
+        "Foundation",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+objc_library(
+    name = "live_pitch",
+    srcs = ["live_pitch.mm"],
+    hdrs = ["live_pitch.h"],
+    sdk_frameworks = [
+        "AVFoundation",
+        "AudioToolbox",
+        "CoreAudio",
+        "Foundation",
+    ],
+    visibility = ["//visibility:public"],
+    deps = ["//core"],
+)
+
+objc_library(
+    name = "pitch_plot",
+    srcs = ["pitch_plot.mm"],
+    hdrs = ["pitch_plot.h"],
+    sdk_frameworks = [
+        "CoreGraphics",
+        "CoreText",
+        "Foundation",
+    ],
+    visibility = ["//visibility:public"],
+    deps = ["//core"],
+)
+
+objc_library(
+    name = "audio_file_test_lib",
+    testonly = True,
+    srcs = ["audio_file_test.mm"],
+    sdk_frameworks = [
+        "AudioToolbox",
+        "Foundation",
+    ],
+    deps = [
+        ":audio_file",
+        "@googletest//:gtest",
+    ],
+    alwayslink = True,
+)
+
+cc_test(
+    name = "audio_file_test",
+    size = "small",
+    deps = [
+        ":audio_file_test_lib",
+        "@googletest//:gtest_main",
+    ],
+)

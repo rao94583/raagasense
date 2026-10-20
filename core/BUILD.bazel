@@ -1,0 +1,36 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+# Plain C++ with no Apple frameworks, shared by the tools and every app.
+cc_library(
+    name = "core",
+    srcs = [
+        "pitch.cpp",
+        "svara.cpp",
+    ],
+    hdrs = [
+        "pitch.h",
+        "svara.h",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "pitch_test",
+    size = "small",
+    srcs = ["pitch_test.cpp"],
+    deps = [
+        ":core",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "svara_test",
+    size = "small",
+    srcs = ["svara_test.cpp"],
+    deps = [
+        ":core",
+        "@googletest//:gtest_main",
+    ],
+)
