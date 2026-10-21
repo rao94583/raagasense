@@ -3,7 +3,7 @@
 // by how likely the held time on each svara is under a simple model of the
 // raag: its svaras likely, its vadi more so and its occasional svaras less,
 // every other svara rare, and a penalty for each svara it can't do without
-// that's missing. It knows nothing yet of phrasing, so raags with the same
+// that's missing and for each svara it doesn't use that's there. It knows nothing yet of phrasing, so raags with the same
 // svaras are told apart only by their vadi.
 #pragma once
 

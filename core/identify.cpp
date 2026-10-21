@@ -18,7 +18,10 @@ constexpr double kOffRaag = 0.03;
 constexpr double kOccasionalWeight = 0.25;
 constexpr double kVadiWeight = 1.5;
 // What a svara the raag can't do without costs when it gets less than this
-// share of the held time.
+// share of the held time, and what a svara the raag doesn't use costs when it
+// gets at least that much. Without the second, raags with few svaras win too
+// often: they make each of their own likelier, and the model expects some
+// held time off any raag's svaras anyway.
 constexpr double kMissingPenalty = 0.4;
 constexpr double kMissingShare = 0.01;
 // How much EstimateTonic's score for the Sa (the share of held time on it and
@@ -41,6 +44,7 @@ double Score(const Raag& raag, const double (&share)[12], double sa_and_pa) {
     const bool essential =
         weight[svara] > 0 && std::find(raag.occasional.begin(), raag.occasional.end(), svara) == raag.occasional.end();
     if (essential && share[svara] < kMissingShare) score -= kMissingPenalty;
+    if (weight[svara] == 0 && share[svara] >= kMissingShare) score -= kMissingPenalty;
   }
   return score;
 }

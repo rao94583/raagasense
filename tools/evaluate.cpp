@@ -80,7 +80,8 @@ std::string Lower(std::string text) {
   return text;
 }
 
-// The raag whose name the file name starts with, preferring the longest.
+// The raag whose name or alias the file name starts with, preferring the
+// longest.
 const Raag* RaagFromName(const std::string& stem) {
   std::string name;
   for (char c : Lower(stem)) {
@@ -89,13 +90,17 @@ const Raag* RaagFromName(const std::string& stem) {
   const Raag* best = nullptr;
   size_t best_length = 0;
   for (const Raag& raag : Raags()) {
-    std::string key;
-    for (char c : Lower(raag.name)) {
-      if (c != ' ') key += c;
-    }
-    if (name.starts_with(key) && key.size() > best_length) {
-      best = &raag;
-      best_length = key.size();
+    std::vector<std::string> names = raag.aliases;
+    names.push_back(raag.name);
+    for (const std::string& raag_name : names) {
+      std::string key;
+      for (char c : Lower(raag_name)) {
+        if (c != ' ' && c != '(' && c != ')') key += c;
+      }
+      if (name.starts_with(key) && key.size() > best_length) {
+        best = &raag;
+        best_length = key.size();
+      }
     }
   }
   return best;

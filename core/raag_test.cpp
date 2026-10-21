@@ -30,6 +30,13 @@ TEST(Raags, WellFormed) {
   }
 }
 
+TEST(Raags, NamesAndAliasesAreUnique) {
+  for (const Raag& raag : Raags()) {
+    EXPECT_EQ(FindRaag(raag.name), &raag) << raag.name;
+    for (const std::string& alias : raag.aliases) EXPECT_EQ(FindRaag(alias), &raag) << alias;
+  }
+}
+
 TEST(Raags, Find) {
   ASSERT_NE(FindRaag("Miyan ki Todi"), nullptr);
   EXPECT_EQ(FindRaag("miyan_ki_todi"), FindRaag("Miyan ki Todi"));
@@ -37,6 +44,8 @@ TEST(Raags, Find) {
   EXPECT_EQ(FindRaag("Raag Imaginary"), nullptr);
   ASSERT_NE(FindRaag("Dhanashree (Bilawal thaat)"), nullptr);
   EXPECT_NE(FindRaag("Dhanashree (Bilawal thaat)"), FindRaag("Dhanashree"));
+  EXPECT_EQ(FindRaag("Bhupali"), FindRaag("Bhoopali"));
+  EXPECT_EQ(FindRaag("marva"), FindRaag("Marwa"));
 }
 
 TEST(Raags, Svaras) {
