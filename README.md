@@ -16,6 +16,7 @@ bazel run //tools:analyze -- --tonic recording.mp3           # candidates for Sa
 bazel run //tools:analyze -- --tonic --svaras "S g m d n" recording.mp3  # ...knowing the raag
 bazel run //tools:analyze -- --csv recording.mp3             # per-frame pitch
 bazel run //tools:plot -- recording.mp3 out.png              # pitch over svara grid
+bazel run //tools:evaluate                                   # check against recordings/
 bazel run //tools:record -- --list                           # sound inputs
 bazel run //tools:record -- --input M2 --channels 3,4 recordings/yaman.m4a
 ```
@@ -26,7 +27,7 @@ The tools estimate Sa from the recording; `--sa HZ` sets it instead.
 
 | Directory | Contents | Depends on |
 |---|---|---|
-| `core/` | Pitch tracking, svaras, steady notes, tonic; later raaga matching | C++ standard library only |
+| `core/` | Pitch tracking, svaras, steady notes, tonic, the raags' svaras; later raaga matching | C++ standard library only |
 | `platform/` | Audio files, sound inputs, the microphone, the pitch plot | Core Audio, AVFoundation, Core Graphics; no AppKit or UIKit |
 | `app/macos/` | The macOS app | AppKit |
 | `tools/` | Command-line tools for working on recordings | macOS |
@@ -45,5 +46,6 @@ session, and the plot draws into any Core Graphics context).
 - [x] Tonic (Sa) estimate from held Sa and Pa, in the tools
 - [ ] Tonic for raagas without Pa, and in the app
 - [ ] Andolan, and meends as transitions between svaras
-- [ ] Raaga knowledge base and scoring
+- [x] Svaras of 29 raags, and Sa from a known raag
+- [ ] Raaga knowledge base (emphasis, phrases) and scoring
 - [ ] iOS app

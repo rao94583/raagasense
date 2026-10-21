@@ -45,3 +45,12 @@ cc_binary(
     name = "record",
     deps = [":record_main"],
 )
+
+cc_binary(
+    name = "evaluate",
+    srcs = ["evaluate.cpp"],
+    deps = [
+        "//core",
+        "//platform:audio_file",
+    ],
+)
