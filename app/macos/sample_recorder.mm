@@ -1,18 +1,24 @@
 #import "app/macos/sample_recorder.h"
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "core/raag.h"
 #include "core/sa_finder.h"
+#include "core/svara.h"
 
 namespace {
 
 // User defaults keys for the choices to remember.
 NSString* const kFolderKey = @"SampleFolder";
 NSString* const kRaagKey = @"SampleRaag";
+// Raags not in the app's list, as dictionaries of a name and svaras.
+NSString* const kOtherRaagsKey = @"SampleOtherRaags";
+NSString* const kOtherRaagItem = @"Other Raag…";
 NSString* const kPerformerKey = @"SamplePerformer";
 
 // How often the status updates, in seconds.
@@ -35,6 +41,21 @@ std::pair<int, double> Note(double frequency) {
 NSString* ShownNote(double frequency) {
   const auto [note, cents] = Note(frequency);
   return [NSString stringWithFormat:@"%@ (%+.0f¢)", @(kShownNotes[note]), cents];
+}
+
+// Svaras from Bhatkhande letters separated by spaces or commas, in ascending
+// order; nullopt if any letter isn't a svara's.
+std::optional<std::vector<int>> ParseSvaras(NSString* text) {
+  std::vector<int> svaras;
+  for (NSString* letter in [text componentsSeparatedByCharactersInSet:
+                                     [NSCharacterSet characterSetWithCharactersInString:@" ,"]]) {
+    if (letter.length == 0) continue;
+    const int svara = raagasense::SvaraFromLetter(letter.UTF8String);
+    if (svara < 0) return std::nullopt;
+    if (std::find(svaras.begin(), svaras.end(), svara) == svaras.end()) svaras.push_back(svara);
+  }
+  std::sort(svaras.begin(), svaras.end());
+  return svaras;
 }
 
 // Lower case letters and digits, with anything else as single underscores.
@@ -83,8 +104,12 @@ NSString* MinutesAndSeconds(double seconds) {
   NSButton* _stopButton;
   NSButton* _discardButton;
 
-  // The recording in progress, if any.
-  const raagasense::Raag* _raag;
+  // The raag chosen before the Other Raag item, to go back to if that's
+  // cancelled.
+  NSString* _previousRaag;
+  // The recording in progress, if any, and its raag. Without the raag's
+  // svaras there's no finder, and no Sa.
+  raagasense::Raag _raag;
   std::unique_ptr<raagasense::SaFinder> _finder;
   NSTimer* _timer;
   NSString* _partialPath;
@@ -114,8 +139,9 @@ NSString* MinutesAndSeconds(double seconds) {
   NSUserDefaults* defaults = NSUserDefaults.standardUserDefaults;
 
   _raagPopUp = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
-  for (const raagasense::Raag& raag : raagasense::Raags()) [_raagPopUp addItemWithTitle:@(raag.name.c_str())];
-  if (NSString* raag = [defaults stringForKey:kRaagKey]) [_raagPopUp selectItemWithTitle:raag];
+  _raagPopUp.target = self;
+  _raagPopUp.action = @selector(raagChosen:);
+  [self buildRaagMenu:[defaults stringForKey:kRaagKey]];
 
   _performerBox = [[NSComboBox alloc] initWithFrame:NSZeroRect];
   [_performerBox addItemsWithObjectValues:@[
@@ -172,6 +198,112 @@ NSString* MinutesAndSeconds(double seconds) {
     [view.widthAnchor constraintEqualToAnchor:content.widthAnchor constant:-40].active = YES;
   }
   self.window.contentView = content;
+}
+
+// The app's raags, then any others added, then the item to add another;
+// selects the named one if it's there.
+- (void)buildRaagMenu:(NSString*)selected {
+  [_raagPopUp removeAllItems];
+  for (const raagasense::Raag& raag : raagasense::Raags()) [_raagPopUp addItemWithTitle:@(raag.name.c_str())];
+  NSArray<NSDictionary*>* others = [NSUserDefaults.standardUserDefaults arrayForKey:kOtherRaagsKey];
+  if (others.count > 0) [_raagPopUp.menu addItem:[NSMenuItem separatorItem]];
+  for (NSDictionary* other in others) [_raagPopUp addItemWithTitle:other[@"name"]];
+  [_raagPopUp.menu addItem:[NSMenuItem separatorItem]];
+  [_raagPopUp addItemWithTitle:kOtherRaagItem];
+  if (selected && [_raagPopUp itemWithTitle:selected] && ![selected isEqualToString:kOtherRaagItem]) {
+    [_raagPopUp selectItemWithTitle:selected];
+  } else {
+    [_raagPopUp selectItemAtIndex:0];
+  }
+  _previousRaag = _raagPopUp.titleOfSelectedItem;
+}
+
+- (void)raagChosen:(NSPopUpButton*)sender {
+  if ([sender.titleOfSelectedItem isEqualToString:kOtherRaagItem]) {
+    [self askForOtherRaag:@"" svaras:@""];
+  } else {
+    _previousRaag = sender.titleOfSelectedItem;
+  }
+}
+
+// Asks for a raag that isn't in the app's list: its name, and its svaras so
+// that Sa can be found.
+- (void)askForOtherRaag:(NSString*)name svaras:(NSString*)svaras {
+  NSTextField* nameField = [NSTextField textFieldWithString:name];
+  nameField.placeholderString = @"Name, e.g. Shuddh Sarang";
+  NSTextField* svarasField = [NSTextField textFieldWithString:svaras];
+  svarasField.placeholderString = @"Svaras, e.g. S R m M P D N";
+  NSStackView* fields = [NSStackView stackViewWithViews:@[ nameField, svarasField ]];
+  fields.orientation = NSUserInterfaceLayoutOrientationVertical;
+  fields.frame = NSMakeRect(0, 0, 300, 52);
+  for (NSTextField* field in @[ nameField, svarasField ]) {
+    [field.widthAnchor constraintEqualToConstant:300].active = YES;
+  }
+
+  NSAlert* alert = [[NSAlert alloc] init];
+  alert.messageText = @"Other Raag";
+  alert.informativeText = @"Give its svaras in Bhatkhande letters: small r g d n for komal, M for tivra Ma. "
+                          @"Without them the recording can't find Sa or stop by itself.";
+  alert.accessoryView = fields;
+  [alert addButtonWithTitle:@"Add"];
+  [alert addButtonWithTitle:@"Cancel"];
+  alert.window.initialFirstResponder = nameField;
+  [alert beginSheetModalForWindow:self.window
+                completionHandler:^(NSModalResponse response) {
+                  if (response != NSAlertFirstButtonReturn) {
+                    [self buildRaagMenu:self->_previousRaag];
+                    return;
+                  }
+                  [self addOtherRaag:nameField.stringValue svaras:svarasField.stringValue];
+                }];
+}
+
+- (void)addOtherRaag:(NSString*)name svaras:(NSString*)svaras {
+  name = [name stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+  const std::optional<std::vector<int>> parsed = ParseSvaras(svaras);
+  NSString* problem = nil;
+  if (name.length == 0) {
+    problem = @"Give the raag's name.";
+  } else if (!parsed) {
+    problem = @"The svaras must be Bhatkhande letters: S r R g G m M P d D n N.";
+  } else if (!parsed->empty() && parsed->front() != raagasense::kSa) {
+    problem = @"The svaras must include Sa.";
+  }
+  if (problem) {
+    // Ask again once this alert has gone.
+    dispatch_async(dispatch_get_main_queue(), ^{
+      NSAlert* alert = [[NSAlert alloc] init];
+      alert.messageText = problem;
+      [alert beginSheetModalForWindow:self.window
+                    completionHandler:^(NSModalResponse) {
+                      [self askForOtherRaag:name svaras:svaras];
+                    }];
+    });
+    return;
+  }
+  if (raagasense::FindRaag(name.UTF8String)) {
+    // It's one the app knows after all.
+    [self buildRaagMenu:@(raagasense::FindRaag(name.UTF8String)->name.c_str())];
+    return;
+  }
+  NSMutableArray<NSDictionary*>* others =
+      [([NSUserDefaults.standardUserDefaults arrayForKey:kOtherRaagsKey] ?: @[]) mutableCopy];
+  [others filterUsingPredicate:[NSPredicate predicateWithFormat:@"name !=[c] %@", name]];
+  [others addObject:@{@"name" : name, @"svaras" : svaras}];
+  [NSUserDefaults.standardUserDefaults setObject:others forKey:kOtherRaagsKey];
+  [self buildRaagMenu:name];
+}
+
+// The chosen raag: one of the app's, or another with whatever svaras were
+// given for it.
+- (raagasense::Raag)chosenRaag {
+  NSString* name = _raagPopUp.titleOfSelectedItem;
+  if (const raagasense::Raag* known = raagasense::FindRaag(name.UTF8String)) return *known;
+  raagasense::Raag raag{name.UTF8String, {}, {}, -1, -1};
+  for (NSDictionary* other in [NSUserDefaults.standardUserDefaults arrayForKey:kOtherRaagsKey]) {
+    if ([other[@"name"] isEqualToString:name]) raag.svaras = ParseSvaras(other[@"svaras"]).value_or(std::vector<int>{});
+  }
+  return raag;
 }
 
 - (NSString*)folder {
@@ -244,8 +376,8 @@ NSString* MinutesAndSeconds(double seconds) {
 }
 
 - (void)beginRecording {
-  _raag = &raagasense::Raags()[_raagPopUp.indexOfSelectedItem];
-  _finder = std::make_unique<raagasense::SaFinder>(*_raag);
+  _raag = [self chosenRaag];
+  _finder = _raag.svaras.empty() ? nullptr : std::make_unique<raagasense::SaFinder>(_raag);
   _partialPath = [self.folder stringByAppendingPathComponent:@".recording.m4a"];
   const std::string error = _livePitch->StartRecording(_partialPath.UTF8String);
   if (!error.empty()) {
@@ -276,13 +408,19 @@ NSString* MinutesAndSeconds(double seconds) {
   }
   if (!fresh.empty()) {
     _lastTime = fresh.back().time;
-    _finder->Add(fresh);
+    if (_finder) _finder->Add(fresh);
   }
   [self update];
-  if (_finder->status().confident) [self finish:YES];
+  if (_finder && _finder->status().confident) [self finish:YES];
 }
 
 - (void)update {
+  if (!_finder) {
+    _statusLabel.stringValue = [NSString
+        stringWithFormat:@"Recording %@ of %@. Without its svaras there's no Sa to find, so stop when you have enough.",
+                         MinutesAndSeconds(_lastTime - _startTime), @(_raag.name.c_str())];
+    return;
+  }
   const raagasense::SaStatus& status = _finder->status();
   const double needed = raagasense::SaFinderOptions().min_held_seconds;
   _progress.doubleValue = std::min(1.0, status.held_seconds / needed);
@@ -292,7 +430,7 @@ NSString* MinutesAndSeconds(double seconds) {
                      : @"No Sa yet.";
   _statusLabel.stringValue =
       [NSString stringWithFormat:@"Recording %@ of %@. Held notes so far: %.0f s of the %.0f s needed.\n%@",
-                                 MinutesAndSeconds(_lastTime - _startTime), @(_raag->name.c_str()), status.held_seconds,
+                                 MinutesAndSeconds(_lastTime - _startTime), @(_raag.name.c_str()), status.held_seconds,
                                  needed, sa];
   if (status.sa > 0 && status.held_seconds >= kShowSaAfter) [_host showSa:status.sa];
 }
@@ -323,10 +461,10 @@ NSString* MinutesAndSeconds(double seconds) {
     return;
   }
 
-  const raagasense::SaStatus status = _finder->status();
+  const raagasense::SaStatus status = _finder ? _finder->status() : raagasense::SaStatus{};
   NSString* performer = Slug(_performerBox.stringValue);
   NSString* artist = Slug(_artistField.stringValue);
-  NSMutableString* stem = [NSMutableString stringWithFormat:@"%@_%@", Slug(@(_raag->name.c_str())), performer];
+  NSMutableString* stem = [NSMutableString stringWithFormat:@"%@_%@", Slug(@(_raag.name.c_str())), performer];
   if (artist.length > 0) [stem appendFormat:@"_%@", artist];
   // Only a Sa it's sure of goes in the name.
   if (status.confident) [stem appendFormat:@"_%s", kFileNotes[Note(status.sa).first]];
@@ -341,15 +479,23 @@ NSString* MinutesAndSeconds(double seconds) {
   }
 
   NSString* sure = status.confident ? @"sure" : @"stopped before it was sure";
-  NSMutableString* notes = [NSMutableString
-      stringWithFormat:@"Recorded with RaagaSense; Sa found live from the raag (%@, held notes %.0f s, lead %.2f)",
-                       sure, status.held_seconds, status.margin];
+  NSMutableString* notes =
+      _finder ? [NSMutableString
+                    stringWithFormat:@"Recorded with RaagaSense; Sa found live from the raag (%@, held notes %.0f s, lead %.2f)",
+                                     sure, status.held_seconds, status.margin]
+              : [NSMutableString stringWithString:@"Recorded with RaagaSense; no Sa, as the raag's svaras weren't given"];
+  if (!raagasense::FindRaag(_raag.name)) {
+    std::string letters;
+    for (int svara : _raag.svaras) letters += (letters.empty() ? "" : " ") + std::string(raagasense::SvaraLetter(svara));
+    [notes appendFormat:@"; not in the app's raags%@",
+                        letters.empty() ? @"" : [NSString stringWithFormat:@", svaras %s", letters.c_str()]];
+  }
   if (artist.length > 0) [notes appendFormat:@"; artist %@", _artistField.stringValue];
   NSString* labels = [self.folder stringByAppendingPathComponent:@"labels.csv"];
   NSMutableString* row = [NSMutableString string];
   if (![files fileExistsAtPath:labels]) [row appendString:@"file,raag,sa_hz,singer,notes,sa_checked\n"];
   const double sa = status.held_seconds >= kShowSaAfter ? status.sa : 0;
-  [row appendFormat:@"%@,%@,%.1f,%@,%@,no\n", CsvField(name), CsvField(@(_raag->name.c_str())), sa,
+  [row appendFormat:@"%@,%@,%.1f,%@,%@,no\n", CsvField(name), CsvField(@(_raag.name.c_str())), sa,
                     CsvField(performer), CsvField(notes)];
   NSFileHandle* handle = [NSFileHandle fileHandleForWritingAtPath:labels];
   if (handle) {
@@ -364,7 +510,7 @@ NSString* MinutesAndSeconds(double seconds) {
       stringWithFormat:@"Saved %@ (%@).\n%@", name, MinutesAndSeconds(seconds),
                        status.sa > 0 && status.held_seconds >= kShowSaAfter
                            ? [NSString stringWithFormat:@"Sa %@, %@. Please check it by ear.", ShownNote(status.sa), sure]
-                           : @"No Sa: too few held notes."];
+                           : _finder ? @"No Sa: too few held notes." : @"No Sa: the raag's svaras weren't given."];
 }
 
 @end
