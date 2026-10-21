@@ -13,6 +13,14 @@ namespace {
 // The share of held time the model expects off the raag's svaras: slips,
 // grace notes and pitch tracking errors.
 constexpr double kOffRaag = 0.03;
+// How likely, relative to its other svaras, the model takes a raag's
+// occasional svaras and its vadi to be held.
+constexpr double kOccasionalWeight = 0.25;
+constexpr double kVadiWeight = 1.5;
+// What a svara the raag can't do without costs when it gets less than this
+// share of the held time.
+constexpr double kMissingPenalty = 0.4;
+constexpr double kMissingShare = 0.01;
 // How much EstimateTonic's score for the Sa (the share of held time on it and
 // its Pa) adds to a match's score.
 constexpr double kSaPaWeight = 0.5;
@@ -32,11 +40,19 @@ std::vector<RaagMatch> IdentifyRaag(std::span<const SteadyNote> notes) {
       share[NearestSvara(CentsFromSa(note.frequency, candidate.frequency)).svara] += (note.end - note.start) / total;
     }
     for (const Raag& raag : Raags()) {
-      const double in = raag.svaras.size(), out = 12 - in;
+      double weight[12] = {}, total_weight = 0;
+      for (int svara : raag.svaras) {
+        const bool occasional = std::find(raag.occasional.begin(), raag.occasional.end(), svara) != raag.occasional.end();
+        weight[svara] = (occasional ? kOccasionalWeight : 1) * (svara == raag.vadi ? kVadiWeight : 1);
+        total_weight += weight[svara];
+      }
+      const double out = 12.0 - raag.svaras.size();
       double score = kSaPaWeight * candidate.score;
       for (int svara = 0; svara < 12; ++svara) {
-        const bool used = std::find(raag.svaras.begin(), raag.svaras.end(), svara) != raag.svaras.end();
-        score += share[svara] * std::log(used ? (1 - kOffRaag) / in : kOffRaag / out);
+        score += share[svara] * std::log(weight[svara] > 0 ? (1 - kOffRaag) * weight[svara] / total_weight : kOffRaag / out);
+        const bool essential = weight[svara] > 0 &&
+            std::find(raag.occasional.begin(), raag.occasional.end(), svara) == raag.occasional.end();
+        if (essential && share[svara] < kMissingShare) score -= kMissingPenalty;
       }
       auto match = std::find_if(best.begin(), best.end(), [&](const RaagMatch& m) { return m.raag == &raag; });
       if (match == best.end()) {

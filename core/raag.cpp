@@ -17,6 +17,14 @@ std::vector<int> Svaras(std::string_view letters) {
   return svaras;
 }
 
+// A raag from its svaras, the occasional ones among them, and its vadi and
+// samvadi, all as Bhatkhande letters; empty vadi and samvadi when not known.
+Raag Make(std::string name, std::string_view svaras, std::string_view occasional, std::string_view vadi,
+          std::string_view samvadi) {
+  return {std::move(name), Svaras(svaras), Svaras(occasional), vadi.empty() ? -1 : SvaraFromLetter(vadi),
+          samvadi.empty() ? -1 : SvaraFromLetter(samvadi)};
+}
+
 std::string Normalize(std::string_view name) {
   std::string normalized;
   for (char c : name) {
@@ -27,37 +35,37 @@ std::string Normalize(std::string_view name) {
 
 const std::vector<Raag>& AllRaags() {
   static const std::vector<Raag> raags = {
-      {"Adana", Svaras("S R g m P d n")},
-      {"Ahir Bhairav", Svaras("S r G m P D n")},
-      {"Bageshree", Svaras("S R g m P D n")},
-      {"Bhairav", Svaras("S r G m P d N")},
-      {"Bhimpalasi", Svaras("S R g m P D n")},
-      {"Bhoopali", Svaras("S R G P D")},
-      {"Bihag", Svaras("S R G m M P D N")},
-      {"Bilawal", Svaras("S R G m P D n N")},
-      {"Chandrakauns", Svaras("S g m d N")},
-      {"Darbari Kanada", Svaras("S R g m P d n")},
-      {"Desh", Svaras("S R G m P D n N")},
-      {"Deshkar", Svaras("S R G P D")},
-      {"Dhanashree", Svaras("S R g m P D n")},
+      Make("Adana", "S R g m P d n", "", "S", "P"),
+      Make("Ahir Bhairav", "S r G m P D n", "", "m", "S"),
+      Make("Bageshree", "S R g m P D n", "P", "m", "S"),
+      Make("Bhairav", "S r G m P d N", "", "d", "r"),
+      Make("Bhimpalasi", "S R g m P D n", "", "m", "S"),
+      Make("Bhoopali", "S R G P D", "", "G", "D"),
+      Make("Bihag", "S R G m M P D N", "M", "G", "N"),
+      Make("Bilawal", "S R G m P D n N", "n", "D", "G"),
+      Make("Chandrakauns", "S g m d N", "", "", ""),
+      Make("Darbari Kanada", "S R g m P d n", "", "R", "P"),
+      Make("Desh", "S R G m P D n N", "", "R", "P"),
+      Make("Deshkar", "S R G P D", "", "D", "G"),
+      Make("Dhanashree", "S R g m P D n", "", "P", "S"),
       // A rarer form in some gharanas, sung by Ulhas Kashalkar among others.
-      {"Dhanashree (Bilawal thaat)", Svaras("S R G m P D N")},
-      {"Dhani", Svaras("S g m P n")},
-      {"Durga", Svaras("S R m P D")},
-      {"Gurjari Todi", Svaras("S r g M d N")},
-      {"Kafi", Svaras("S R g m P D n")},
-      {"Madhmad Sarang", Svaras("S R m P n")},
-      {"Malkauns", Svaras("S g m d n")},
-      {"Marwa", Svaras("S r G M D N")},
-      {"Miyan ki Todi", Svaras("S r g M P d N")},
-      {"Multani", Svaras("S r g M P d N")},
-      {"Puriya", Svaras("S r G M D N")},
-      {"Puriya Dhanashree", Svaras("S r G M P d N")},
-      {"Ramkali", Svaras("S r G m M P d n N")},
-      {"Sohini", Svaras("S r G M D N")},
-      {"Tilak Kamod", Svaras("S R G m P D n N")},
-      {"Yaman", Svaras("S R G M P D N")},
-      {"Yaman Kalyan", Svaras("S R G m M P D N")},
+      Make("Dhanashree (Bilawal thaat)", "S R G m P D N", "", "", ""),
+      Make("Dhani", "S g m P n", "", "g", "n"),
+      Make("Durga", "S R m P D", "", "m", "S"),
+      Make("Gurjari Todi", "S r g M d N", "", "d", "g"),
+      Make("Kafi", "S R g m P D n", "", "P", "S"),
+      Make("Madhmad Sarang", "S R m P n", "", "R", "P"),
+      Make("Malkauns", "S g m d n", "", "m", "S"),
+      Make("Marwa", "S r G M D N", "", "r", "D"),
+      Make("Miyan ki Todi", "S r g M P d N", "P", "d", "g"),
+      Make("Multani", "S r g M P d N", "r d", "P", "S"),
+      Make("Puriya", "S r G M D N", "", "G", "N"),
+      Make("Puriya Dhanashree", "S r G M P d N", "", "P", "r"),
+      Make("Ramkali", "S r G m M P d n N", "M n", "P", "S"),
+      Make("Sohini", "S r G M D N", "", "D", "G"),
+      Make("Tilak Kamod", "S R G m P D n N", "n", "S", "P"),
+      Make("Yaman", "S R G M P D N", "", "G", "N"),
+      Make("Yaman Kalyan", "S R G m M P D N", "m", "G", "N"),
   };
   return raags;
 }

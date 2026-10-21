@@ -47,5 +47,6 @@ session, and the plot draws into any Core Graphics context).
 - [ ] Tonic for raagas without Pa, and in the app
 - [ ] Andolan, and meends as transitions between svaras
 - [x] Svaras of 30 raags (29 names, one in two forms), and Sa from a known raag
-- [ ] Raaga knowledge base (emphasis, phrases) and scoring
+- [x] Naming the raag from held notes: svaras, occasional svaras, vadi
+- [ ] Phrases and movement between svaras, for raags with the same svaras
 - [ ] iOS app

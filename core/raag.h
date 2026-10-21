@@ -16,6 +16,12 @@ struct Raag {
   // Svara values, in ascending order: every svara the raag uses, including
   // ones it only touches.
   std::vector<int> svaras;
+  // The svaras it uses only sparingly, which a performance can leave out.
+  std::vector<int> occasional;
+  // The most and second most important svaras, after Bhatkhande; -1 where
+  // not recorded.
+  int vadi = -1;
+  int samvadi = -1;
 };
 
 // Every raag the app knows, in alphabetical order.

@@ -1,9 +1,10 @@
 // Names the raag from the steady notes of a performance, finding Sa along the
 // way: every raag the app knows is tried from every candidate Sa, and scored
 // by how likely the held time on each svara is under a simple model of the
-// raag, its svaras equally likely and every other svara rare. A first
-// version: it can't yet tell apart raags with the same svaras, which need
-// emphasis and phrasing.
+// raag: its svaras likely, its vadi more so and its occasional svaras less,
+// every other svara rare, and a penalty for each svara it can't do without
+// that's missing. It knows nothing yet of phrasing, so raags with the same
+// svaras are told apart only by their vadi.
 #pragma once
 
 #include <span>

@@ -1,5 +1,6 @@
 #include "core/raag.h"
 
+#include <algorithm>
 #include <set>
 #include <string>
 
@@ -20,6 +21,12 @@ TEST(Raags, WellFormed) {
       EXPECT_GE(raag.svaras[i], 0) << raag.name << ": unknown letter";
       if (i > 0) EXPECT_LT(raag.svaras[i - 1], raag.svaras[i]) << raag.name << ": not ascending";
     }
+    auto uses = [&](int svara) {
+      return std::find(raag.svaras.begin(), raag.svaras.end(), svara) != raag.svaras.end();
+    };
+    for (int svara : raag.occasional) EXPECT_TRUE(uses(svara)) << raag.name << ": occasional svara it doesn't use";
+    if (raag.vadi >= 0) EXPECT_TRUE(uses(raag.vadi)) << raag.name << ": vadi";
+    if (raag.samvadi >= 0) EXPECT_TRUE(uses(raag.samvadi)) << raag.name << ": samvadi";
   }
 }
 
