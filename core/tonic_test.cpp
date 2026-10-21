@@ -82,5 +82,28 @@ TEST(EstimateTonicForSvaras, MalkaunsNotBhoopali) {
   EXPECT_NEAR(candidates[0].score, 1, 1e-9);
 }
 
+// C D E G A B fit Bilawal from C (S R G P D N) and from G (S R G m P D), and
+// a brief F# fits only from G (as N; from C it would be tivra Ma). But much
+// more is held on C and its Pa, G, than on G and its Pa, D, so C wins.
+TEST(EstimateTonicForSvaras, SaAndPaBreakNearTies) {
+  std::vector<SteadyNote> notes;
+  for (int i = 0; i < 3; ++i) {
+    Hold(&notes, 0, 1.0);     // C
+    Hold(&notes, 200, 0.3);   // D
+    Hold(&notes, 400, 0.6);   // E
+    Hold(&notes, 700, 1.0);   // G
+    Hold(&notes, 900, 0.4);   // A
+    Hold(&notes, 1100, 0.3);  // B
+  }
+  Hold(&notes, 600, 0.1);  // F#
+  const int bilawal[] = {Svara::kSa, kRe, kGa, kMa, kPa, kDha, kNi};
+  const std::vector<TonicCandidate> candidates = EstimateTonicForSvaras(notes, bilawal);
+  ASSERT_GE(candidates.size(), 2u);
+  EXPECT_NEAR(candidates[0].score, 1 - 0.1 / 10.9, 1e-9);
+  EXPECT_NEAR(candidates[1].score, 1, 1e-9);
+  const double first = CentsFromSa(candidates[0].frequency, kSa);
+  EXPECT_NEAR(first - 1200 * std::floor(first / 1200), 0, 5);
+}
+
 }  // namespace
 }  // namespace raagasense

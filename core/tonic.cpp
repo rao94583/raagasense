@@ -20,6 +20,10 @@ constexpr double kMinPeak = 0.05;
 // Held notes this close to a svara count as that svara.
 constexpr double kSvaraCents = 50;
 constexpr double kPaCents = 700;
+// How much the share on Sa and Pa counts against the fit to a known raag's
+// svaras in ranking candidates. On 33 labeled recordings, 0.05 to 0.15 get
+// one more Sa right than 0 does; 0.2 and up start getting others wrong.
+constexpr double kSaPaWeight = 0.1;
 
 double Cents(double frequency) { return 1200 * std::log2(frequency / kReference); }
 
@@ -101,16 +105,20 @@ std::vector<TonicCandidate> EstimateTonicForSvaras(std::span<const SteadyNote> n
   std::vector<TonicCandidate> candidates = EstimateTonic(notes);
   double total = 0;
   for (const SteadyNote& note : notes) total += Duration(note);
-  for (TonicCandidate& candidate : candidates) {
+  std::vector<std::pair<double, TonicCandidate>> ranked;
+  for (TonicCandidate candidate : candidates) {
     double in_raag = 0;
     for (const SteadyNote& note : notes) {
       const int svara = NearestSvara(CentsFromSa(note.frequency, candidate.frequency)).svara;
       if (std::find(svaras.begin(), svaras.end(), svara) != svaras.end()) in_raag += Duration(note);
     }
+    const double sa_and_pa = candidate.score;
     candidate.score = in_raag / total;
+    ranked.push_back({candidate.score + kSaPaWeight * sa_and_pa, candidate});
   }
-  std::stable_sort(candidates.begin(), candidates.end(),
-                   [](const TonicCandidate& a, const TonicCandidate& b) { return a.score > b.score; });
+  std::stable_sort(ranked.begin(), ranked.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+  candidates.clear();
+  for (const auto& [rank, candidate] : ranked) candidates.push_back(candidate);
   return candidates;
 }
 
