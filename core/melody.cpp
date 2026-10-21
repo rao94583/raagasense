@@ -51,21 +51,27 @@ MelodyTracker::MelodyTracker(const MelodyOptions& options)
   }
 }
 
-std::pair<double, double> MelodyTracker::Analyze(size_t offset) {
+std::vector<double> MelodyTracker::Magnitude(size_t offset) {
   const int n = options_.frame_size;
-  const double rate = options_.sample_rate;
   std::vector<std::complex<double>> spectrum(n);
   for (int i = 0; i < n; ++i) spectrum[i] = pending_[offset + i] * window_[i];
   Fft(spectrum);
-  std::vector<double> magnitude(n / 2);
-  for (int k = 0; k < n / 2; ++k) magnitude[k] = std::abs(spectrum[k]);
+  const int bins = std::min(n / 2, static_cast<int>(kMaxPeakHz * n / options_.sample_rate) + 2);
+  std::vector<double> magnitude(bins);
+  for (int k = 0; k < bins; ++k) magnitude[k] = std::abs(spectrum[k]);
+  return magnitude;
+}
+
+std::pair<double, double> MelodyTracker::Salience(const std::vector<double>& magnitude) const {
+  const int n = options_.frame_size;
+  const double rate = options_.sample_rate;
   const double loudest = *std::max_element(magnitude.begin(), magnitude.end());
   if (loudest <= 0) return {0, 0};
   const double floor = loudest * std::pow(10, options_.peak_floor_db / 20);
 
   const int bins = static_cast<int>(1200 * std::log2(options_.max_frequency / options_.min_frequency) / kBinCents) + 1;
   std::vector<double> salience(bins, 0);
-  for (int k = 2; k < n / 2 - 1; ++k) {
+  for (int k = 2; k < static_cast<int>(magnitude.size()) - 1; ++k) {
     const double hz = k * rate / n;
     if (hz < kMinPeakHz || hz > kMaxPeakHz) continue;
     if (magnitude[k] < floor || magnitude[k] <= magnitude[k - 1] || magnitude[k] < magnitude[k + 1]) continue;
@@ -100,13 +106,35 @@ std::pair<double, double> MelodyTracker::Analyze(size_t offset) {
   return {options_.min_frequency * std::exp2(refined * kBinCents / 1200), salience[best]};
 }
 
-void MelodyTracker::Push(std::span<const float> samples, std::vector<PitchFrame>* out) {
-  pending_.insert(pending_.end(), samples.begin(), samples.end());
-  const size_t frame_size = options_.frame_size;
+void MelodyTracker::Emit(bool all, std::vector<PitchFrame>* out) {
+  const size_t half = options_.percussion_frames > 1 ? options_.percussion_frames / 2 : 0;
   const size_t keep = static_cast<size_t>(options_.reference_seconds * options_.sample_rate / hop_size_);
-  size_t offset = 0;
-  while (pending_.size() - offset >= frame_size) {
-    const auto [frequency, salience] = Analyze(offset);
+  std::vector<double> values;
+  while (next_ < spectra_.size() && (all || spectra_.size() - 1 - next_ >= half)) {
+    std::vector<double> magnitude = spectra_[next_].magnitude;
+    if (half > 0) {
+      // Weight each bin by a soft mask: steady over time (harmonic) against
+      // steady across frequency (percussive), both as squared medians.
+      const size_t first = next_ >= half ? next_ - half : 0, last = std::min(spectra_.size() - 1, next_ + half);
+      const std::vector<double>& here = spectra_[next_].magnitude;
+      const int bins = static_cast<int>(here.size());
+      for (int k = 0; k < bins; ++k) {
+        values.clear();
+        for (size_t t = first; t <= last; ++t) values.push_back(spectra_[t].magnitude[k]);
+        std::nth_element(values.begin(), values.begin() + values.size() / 2, values.end());
+        const double harmonic = values[values.size() / 2];
+        values.clear();
+        for (int j = std::max(0, k - static_cast<int>(half)); j <= std::min(bins - 1, k + static_cast<int>(half)); ++j) {
+          values.push_back(here[j]);
+        }
+        std::nth_element(values.begin(), values.begin() + values.size() / 2, values.end());
+        const double percussive = values[values.size() / 2];
+        const double h = harmonic * harmonic, p = percussive * percussive;
+        magnitude[k] = h + p > 0 ? here[k] * h / (h + p) : 0;
+      }
+    }
+    const auto [frequency, salience] = Salience(magnitude);
+
     recent_.push_back(salience);
     if (recent_.size() > keep) recent_.pop_front();
     std::vector<double> sorted(recent_.begin(), recent_.end());
@@ -115,15 +143,32 @@ void MelodyTracker::Push(std::span<const float> samples, std::vector<PitchFrame>
     const double threshold = options_.voicing * *percentile;
 
     PitchFrame frame;
-    frame.time = (start_ + offset + frame_size / 2.0) / options_.sample_rate;
+    frame.time = spectra_[next_].time;
     frame.confidence = threshold > 0 ? std::min(1.0, 0.5 * salience / threshold) : 0;
     frame.voiced = threshold > 0 && salience >= threshold;
     frame.frequency = frame.voiced ? frequency : 0;
     out->push_back(frame);
+    ++next_;
+    while (next_ > half) {
+      spectra_.pop_front();
+      --next_;
+    }
+  }
+}
+
+void MelodyTracker::Push(std::span<const float> samples, std::vector<PitchFrame>* out) {
+  pending_.insert(pending_.end(), samples.begin(), samples.end());
+  const size_t frame_size = options_.frame_size;
+  size_t offset = 0;
+  while (pending_.size() - offset >= frame_size) {
+    spectra_.push_back({(start_ + offset + frame_size / 2.0) / options_.sample_rate, Magnitude(offset)});
+    Emit(false, out);
     offset += hop_size_;
   }
   pending_.erase(pending_.begin(), pending_.begin() + offset);
   start_ += offset;
 }
+
+void MelodyTracker::Finish(std::vector<PitchFrame>* out) { Emit(true, out); }
 
 }  // namespace raagasense

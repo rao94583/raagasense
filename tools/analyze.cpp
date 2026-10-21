@@ -99,6 +99,7 @@ int main(int argc, char** argv) {
   MelodyTracker tracker(options);
   std::vector<PitchFrame> frames;
   tracker.Push(audio->samples, &frames);
+  tracker.Finish(&frames);
 
   SteadyOptions steady_options;
   steady_options.min_confidence = kMinConfidence;

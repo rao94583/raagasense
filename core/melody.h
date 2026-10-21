@@ -3,7 +3,10 @@
 // simplified. Each spectral peak votes for every fundamental it could be a
 // harmonic of, and the most-voted fundamental wins. Unlike YIN it doesn't need
 // the frame to be periodic, so a tanpura or harmonium under the voice doesn't
-// stop it finding the voice.
+// stop it finding the voice. Before voting, percussion such as tabla is
+// suppressed by harmonic/percussive median filtering (Fitzgerald 2010): a
+// spectral bin counts in proportion to how much steadier it is over time than
+// across frequency.
 #pragma once
 
 #include <cstdint>
@@ -30,6 +33,11 @@ struct MelodyOptions {
   double harmonic_weight = 0.8;
   // Spectral peaks this far below the frame's loudest don't vote.
   double peak_floor_db = -40;
+  // The length, in frames and in bins, of the medians over time and over
+  // frequency that separate sustained sounds from percussive ones; 0 or 1
+  // turns percussion suppression off. Frames come out half this many hops
+  // late.
+  int percussion_frames = 17;
   // A frame is voiced when its salience is at least this fraction of the
   // reference: the 95th percentile of the salience over the last
   // reference_seconds.
@@ -45,14 +53,27 @@ class MelodyTracker {
  public:
   explicit MelodyTracker(const MelodyOptions& options);
 
-  // Appends samples, and appends a frame to *out for every hop completed.
+  // Appends samples, and appends a frame to *out for every hop that's ready:
+  // all but the last percussion_frames / 2 completed.
   void Push(std::span<const float> samples, std::vector<PitchFrame>* out);
+  // Appends the frames still held back, at the end of the stream.
+  void Finish(std::vector<PitchFrame>* out);
 
   const MelodyOptions& options() const { return options_; }
 
  private:
-  // The best fundamental's frequency and salience for the frame at pending_[offset].
-  std::pair<double, double> Analyze(size_t offset);
+  struct Spectrum {
+    double time;
+    std::vector<double> magnitude;
+  };
+
+  // The magnitude spectrum of the frame at pending_[offset], up to the
+  // highest bin that can vote.
+  std::vector<double> Magnitude(size_t offset);
+  // The best fundamental's frequency and salience in a magnitude spectrum.
+  std::pair<double, double> Salience(const std::vector<double>& magnitude) const;
+  // Emits the frames whose later neighbors have arrived, or all of them.
+  void Emit(bool all, std::vector<PitchFrame>* out);
 
   MelodyOptions options_;
   int hop_size_;
@@ -60,6 +81,10 @@ class MelodyTracker {
   std::vector<float> pending_;
   // Stream index of pending_[0].
   int64_t start_ = 0;
+  // Spectra awaiting emission, and the ones before them that their medians
+  // still need; next_ indexes the next to emit.
+  std::deque<Spectrum> spectra_;
+  size_t next_ = 0;
   // Recent frames' salience, for the voicing reference.
   std::deque<double> recent_;
 };

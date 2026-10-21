@@ -188,6 +188,7 @@ int main(int argc, char** argv) {
     MelodyTracker tracker(options);
     std::vector<PitchFrame> frames;
     tracker.Push(audio->samples, &frames);
+    tracker.Finish(&frames);
     const std::vector<SteadyNote> notes = FindSteadyNotes(frames);
     double held = 0;
     for (const SteadyNote& note : notes) held += note.end - note.start;

@@ -64,6 +64,7 @@ int main(int argc, char** argv) {
   MelodyTracker tracker(options);
   std::vector<PitchFrame> frames;
   tracker.Push(audio->samples, &frames);
+  tracker.Finish(&frames);
   if (sa == 0) {
     const std::vector<TonicCandidate> candidates = EstimateTonic(FindSteadyNotes(frames));
     if (candidates.empty()) {
