@@ -8,7 +8,7 @@ raaga matching are all conventional signal processing and rules.
 
 ```sh
 bazel test //...
-bazel run //app/macos:RaagaSense
+bazel run //app/macos:RaagaSense                             # Record Sample… (⌘R) collects labeled samples
 bazel run //tools:analyze -- recording.mp3                   # svara histogram
 bazel run //tools:analyze -- --steady recording.mp3          # ...of steady notes only
 bazel run //tools:analyze -- --notes recording.mp3           # steady notes, one per line
@@ -42,6 +42,7 @@ session, and the plot draws into any Core Graphics context).
 - [x] Melody pitch tracking over accompaniment (harmonic summation)
 - [x] Pitch to svara, relative to a chosen Sa
 - [x] Live pitch display on macOS
+- [x] Recording labeled samples, with Sa found live from the raag
 - [x] Steady notes, apart from meend and kan
 - [x] Tonic (Sa) estimate from held Sa and Pa, in the tools
 - [ ] Tonic for raagas without Pa, and in the app

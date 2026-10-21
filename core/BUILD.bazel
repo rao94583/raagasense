@@ -9,6 +9,7 @@ cc_library(
         "melody.cpp",
         "pitch.cpp",
         "raag.cpp",
+        "sa_finder.cpp",
         "steady.cpp",
         "svara.cpp",
         "tonic.cpp",
@@ -18,6 +19,7 @@ cc_library(
         "melody.h",
         "pitch.h",
         "raag.h",
+        "sa_finder.h",
         "steady.h",
         "svara.h",
         "tonic.h",
@@ -89,6 +91,16 @@ cc_test(
     name = "identify_test",
     size = "small",
     srcs = ["identify_test.cpp"],
+    deps = [
+        ":core",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "sa_finder_test",
+    size = "small",
+    srcs = ["sa_finder_test.cpp"],
     deps = [
         ":core",
         "@googletest//:gtest_main",

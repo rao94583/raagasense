@@ -19,11 +19,19 @@ class LivePitch {
 
   // Asks for microphone access if needed and starts listening to the input
   // with this id (see AudioInputs), or to the system default when it's
-  // empty. Calls done on the
-  // main thread with an empty string on success, or the reason it failed.
+  // empty. Calls done on the main thread with an empty string on success, or
+  // the reason it failed.
   void Start(const std::string& input_id, std::function<void(const std::string& error)> done);
+  // Stops listening, and recording if it was.
   void Stop();
   bool running() const;
+
+  // While listening, also saves the input, mixed to mono, to an audio file:
+  // AAC for .m4a, or 24-bit PCM for .wav, .aiff or .caf. Returns an empty
+  // string on success, or the reason it failed.
+  std::string StartRecording(const std::string& path);
+  // Closes the file, returning the seconds recorded; 0 if not recording.
+  double StopRecording();
 
   // Frames from the last `seconds` of the stream, oldest first.
   std::vector<PitchFrame> Recent(double seconds) const;

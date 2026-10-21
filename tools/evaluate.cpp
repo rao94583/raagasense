@@ -3,8 +3,10 @@
 //   bazel run //tools:evaluate -- [DIRECTORY]
 //
 // DIRECTORY (by default recordings/) holds audio files and, optionally,
-// labels.csv with columns file,raag,sa_hz. A file missing from labels.csv
-// takes its raag from the start of its name (miyan_ki_todi_male.m4a) and its
+// labels.csv with columns file,raag,sa_hz and, optionally, sa_checked. A Sa
+// with sa_checked "no", such as one the app found while recording, doesn't
+// count in checking Sa, and sa_hz 0 means Sa is unknown. A file missing from
+// labels.csv takes its raag from the start of its name (miyan_ki_todi_male.m4a) and its
 // Sa, if any, from a note later in it (bilawal_male_C_sharp.m4a). For each
 // recording it prints the Sa estimated knowing the raag, with how much of the
 // held time fits the raag from it, and the same for the next best Sa; the Sa
@@ -61,11 +63,14 @@ std::map<std::string, Label> ReadLabels(const std::filesystem::path& path) {
   std::map<std::string, Label> labels;
   std::ifstream in(path);
   std::string line;
-  std::getline(in, line);  // The header.
+  std::getline(in, line);
+  const std::vector<std::string> header = CsvFields(line);
+  const size_t checked = std::find(header.begin(), header.end(), "sa_checked") - header.begin();
   while (std::getline(in, line)) {
     const std::vector<std::string> fields = CsvFields(line);
     if (fields.size() < 3) continue;
-    labels[fields[0]] = {fields[1], std::atof(fields[2].c_str())};
+    const bool unchecked = checked < fields.size() && fields[checked] == "no";
+    labels[fields[0]] = {fields[1], unchecked ? 0 : std::atof(fields[2].c_str())};
   }
   return labels;
 }

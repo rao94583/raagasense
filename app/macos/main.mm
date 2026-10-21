@@ -1,11 +1,12 @@
 // RaagaSense for macOS: one window showing a sound input's pitch against a
-// svara grid for a chosen Sa.
+// svara grid for a chosen Sa, and another for recording labeled samples.
 #import <AppKit/AppKit.h>
 
 #include <cmath>
 #include <memory>
 
 #import "app/macos/pitch_view.h"
+#import "app/macos/sample_recorder.h"
 #include "platform/audio_input.h"
 #include "platform/live_pitch.h"
 
@@ -24,7 +25,7 @@ NSString* const kInputIdKey = @"InputID";
 
 }  // namespace
 
-@interface RSAppDelegate : NSObject <NSApplicationDelegate, NSMenuDelegate>
+@interface RSAppDelegate : NSObject <NSApplicationDelegate, NSMenuDelegate, RSSampleRecorderHost>
 @end
 
 @implementation RSAppDelegate {
@@ -33,6 +34,7 @@ NSString* const kInputIdKey = @"InputID";
   RSPitchView* _pitchView;
   NSPopUpButton* _inputPopUp;
   NSButton* _listenButton;
+  RSSampleRecorder* _sampleRecorder;
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification*)notification {
@@ -56,9 +58,11 @@ NSString* const kInputIdKey = @"InputID";
   _listenButton = [NSButton buttonWithTitle:@"Listen" target:self action:@selector(toggleListening:)];
   _listenButton.keyEquivalent = @" ";
 
+  NSButton* recordButton = [NSButton buttonWithTitle:@"Record Sample…" target:self action:@selector(recordSample:)];
+
   NSStackView* controls = [NSStackView stackViewWithViews:@[
     [NSTextField labelWithString:@"Sa:"], saPopUp, [NSTextField labelWithString:@"Input:"], _inputPopUp,
-    [[NSView alloc] init], _listenButton
+    [[NSView alloc] init], recordButton, _listenButton
   ]];
   [controls setCustomSpacing:20 afterView:saPopUp];
   controls.edgeInsets = NSEdgeInsetsMake(8, 12, 8, 12);
@@ -98,6 +102,8 @@ NSString* const kInputIdKey = @"InputID";
   NSMenu* bar = [[NSMenu alloc] init];
   NSMenuItem* appItem = [bar addItemWithTitle:@"" action:nil keyEquivalent:@""];
   NSMenu* appMenu = [[NSMenu alloc] init];
+  [appMenu addItemWithTitle:@"Record Sample…" action:@selector(recordSample:) keyEquivalent:@"r"];
+  [appMenu addItem:[NSMenuItem separatorItem]];
   [appMenu addItemWithTitle:@"Quit RaagaSense" action:@selector(terminate:) keyEquivalent:@"q"];
   appItem.submenu = appMenu;
   NSApp.mainMenu = bar;
@@ -133,7 +139,7 @@ NSString* const kInputIdKey = @"InputID";
   }
   if (_livePitch->running()) {
     _livePitch->Stop();
-    [self startListening];
+    [self startListening:nil];
   }
 }
 
@@ -143,19 +149,25 @@ NSString* const kInputIdKey = @"InputID";
     _listenButton.title = @"Listen";
     return;
   }
-  [self startListening];
+  [self startListening:nil];
 }
 
-- (void)startListening {
+// Starts listening, and calls done, if given, with nil or the error, which
+// is otherwise shown in an alert.
+- (void)startListening:(void (^)(NSString* error))done {
   NSString* inputId = _inputPopUp.selectedItem.representedObject;
   _listenButton.enabled = NO;
   __weak RSAppDelegate* weakSelf = self;
-  _livePitch->Start(inputId ? inputId.UTF8String : "", [weakSelf](const std::string& error) {
+  _livePitch->Start(inputId ? inputId.UTF8String : "", [weakSelf, done](const std::string& error) {
     RSAppDelegate* delegate = weakSelf;
     if (!delegate) return;
     delegate->_listenButton.enabled = YES;
     if (!error.empty()) {
       delegate->_listenButton.title = @"Listen";
+      if (done) {
+        done(@(error.c_str()));
+        return;
+      }
       NSAlert* alert = [[NSAlert alloc] init];
       alert.messageText = @"Can't listen to the sound input";
       alert.informativeText = @(error.c_str());
@@ -163,7 +175,25 @@ NSString* const kInputIdKey = @"InputID";
       return;
     }
     delegate->_listenButton.title = @"Stop";
+    if (done) done(nil);
   });
+}
+
+- (void)recordSample:(id)sender {
+  if (!_sampleRecorder) _sampleRecorder = [[RSSampleRecorder alloc] initWithLivePitch:_livePitch.get() host:self];
+  [_sampleRecorder showWindow:nil];
+}
+
+- (void)ensureListening:(void (^)(NSString* error))done {
+  if (_livePitch->running()) {
+    done(nil);
+    return;
+  }
+  [self startListening:done];
+}
+
+- (void)showSa:(double)frequency {
+  _pitchView.saFrequency = frequency;
 }
 
 @end

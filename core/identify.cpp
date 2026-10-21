@@ -25,45 +25,70 @@ constexpr double kMissingShare = 0.01;
 // its Pa) adds to a match's score.
 constexpr double kSaPaWeight = 0.5;
 
-}  // namespace
+// The score of the raag from a Sa with this share of the held time on each
+// svara, and this score from EstimateTonic.
+double Score(const Raag& raag, const double (&share)[12], double sa_and_pa) {
+  double weight[12] = {}, total_weight = 0;
+  for (int svara : raag.svaras) {
+    const bool occasional = std::find(raag.occasional.begin(), raag.occasional.end(), svara) != raag.occasional.end();
+    weight[svara] = (occasional ? kOccasionalWeight : 1) * (svara == raag.vadi ? kVadiWeight : 1);
+    total_weight += weight[svara];
+  }
+  const double out = 12.0 - raag.svaras.size();
+  double score = kSaPaWeight * sa_and_pa;
+  for (int svara = 0; svara < 12; ++svara) {
+    score += share[svara] * std::log(weight[svara] > 0 ? (1 - kOffRaag) * weight[svara] / total_weight : kOffRaag / out);
+    const bool essential =
+        weight[svara] > 0 && std::find(raag.occasional.begin(), raag.occasional.end(), svara) == raag.occasional.end();
+    if (essential && share[svara] < kMissingShare) score -= kMissingPenalty;
+  }
+  return score;
+}
 
-std::vector<RaagMatch> IdentifyRaag(std::span<const SteadyNote> notes) {
+// Calls score(candidate, share) for each candidate Sa, with the share of the
+// held time on each svara from it.
+template <typename Function>
+void ForEachSa(std::span<const SteadyNote> notes, Function score) {
   double total = 0;
   for (const SteadyNote& note : notes) total += note.end - note.start;
-  std::vector<RaagMatch> best;
-  if (total <= 0) return best;
-
+  if (total <= 0) return;
   for (const TonicCandidate& candidate : EstimateTonic(notes)) {
-    // The share of held time on each svara from this Sa.
     double share[12] = {};
     for (const SteadyNote& note : notes) {
       share[NearestSvara(CentsFromSa(note.frequency, candidate.frequency)).svara] += (note.end - note.start) / total;
     }
+    score(candidate, share);
+  }
+}
+
+bool Better(const RaagMatch& a, const RaagMatch& b) { return a.score > b.score; }
+
+}  // namespace
+
+std::vector<RaagMatch> IdentifyRaag(std::span<const SteadyNote> notes) {
+  std::vector<RaagMatch> best;
+  ForEachSa(notes, [&](const TonicCandidate& candidate, const double (&share)[12]) {
     for (const Raag& raag : Raags()) {
-      double weight[12] = {}, total_weight = 0;
-      for (int svara : raag.svaras) {
-        const bool occasional = std::find(raag.occasional.begin(), raag.occasional.end(), svara) != raag.occasional.end();
-        weight[svara] = (occasional ? kOccasionalWeight : 1) * (svara == raag.vadi ? kVadiWeight : 1);
-        total_weight += weight[svara];
-      }
-      const double out = 12.0 - raag.svaras.size();
-      double score = kSaPaWeight * candidate.score;
-      for (int svara = 0; svara < 12; ++svara) {
-        score += share[svara] * std::log(weight[svara] > 0 ? (1 - kOffRaag) * weight[svara] / total_weight : kOffRaag / out);
-        const bool essential = weight[svara] > 0 &&
-            std::find(raag.occasional.begin(), raag.occasional.end(), svara) == raag.occasional.end();
-        if (essential && share[svara] < kMissingShare) score -= kMissingPenalty;
-      }
-      auto match = std::find_if(best.begin(), best.end(), [&](const RaagMatch& m) { return m.raag == &raag; });
-      if (match == best.end()) {
-        best.push_back({&raag, candidate.frequency, score});
-      } else if (score > match->score) {
-        *match = {&raag, candidate.frequency, score};
+      const RaagMatch match{&raag, candidate.frequency, Score(raag, share, candidate.score)};
+      auto known = std::find_if(best.begin(), best.end(), [&](const RaagMatch& m) { return m.raag == &raag; });
+      if (known == best.end()) {
+        best.push_back(match);
+      } else if (Better(match, *known)) {
+        *known = match;
       }
     }
-  }
-  std::sort(best.begin(), best.end(), [](const RaagMatch& a, const RaagMatch& b) { return a.score > b.score; });
+  });
+  std::sort(best.begin(), best.end(), Better);
   return best;
+}
+
+std::vector<RaagMatch> MatchRaag(std::span<const SteadyNote> notes, const Raag& raag) {
+  std::vector<RaagMatch> matches;
+  ForEachSa(notes, [&](const TonicCandidate& candidate, const double (&share)[12]) {
+    matches.push_back({&raag, candidate.frequency, Score(raag, share, candidate.score)});
+  });
+  std::sort(matches.begin(), matches.end(), Better);
+  return matches;
 }
 
 }  // namespace raagasense

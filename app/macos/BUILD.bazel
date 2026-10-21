@@ -6,10 +6,15 @@ objc_library(
     srcs = [
         "main.mm",
         "pitch_view.mm",
+        "sample_recorder.mm",
     ],
-    hdrs = ["pitch_view.h"],
+    hdrs = [
+        "pitch_view.h",
+        "sample_recorder.h",
+    ],
     sdk_frameworks = ["AppKit"],
     deps = [
+        "//core",
         "//platform:audio_input",
         "//platform:live_pitch",
         "//platform:pitch_plot",

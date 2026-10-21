@@ -1,0 +1,71 @@
+#include "core/sa_finder.h"
+
+#include <cmath>
+#include <vector>
+
+#include "core/svara.h"
+#include "gtest/gtest.h"
+
+namespace raagasense {
+namespace {
+
+constexpr double kSa = 233.08;
+constexpr double kHop = 0.01;
+
+// Appends a held note of the given seconds, in cents from kSa, then a rest.
+void Hold(std::vector<PitchFrame>* frames, double cents, double seconds) {
+  const double start = frames->empty() ? 0 : frames->back().time + kHop;
+  for (double t = 0; t < seconds; t += kHop) {
+    frames->push_back({start + t, kSa * std::exp2(cents / 1200), 0.9, true});
+  }
+  for (double t = 0; t < 0.3; t += kHop) frames->push_back({start + seconds + t, 0, 0, false});
+}
+
+// Yaman phrases, about 6 s of held notes each.
+std::vector<PitchFrame> Yaman(int phrases) {
+  std::vector<PitchFrame> frames;
+  for (int i = 0; i < phrases; ++i) {
+    for (auto [cents, seconds] : {std::pair{-100, 0.6}, {200, 0.5}, {400, 1.0}, {600, 0.4}, {700, 1.2}, {900, 0.5},
+                                  {1100, 0.6}, {0, 1.2}}) {
+      Hold(&frames, cents, seconds);
+    }
+  }
+  return frames;
+}
+
+const Raag& kYaman = *FindRaag("Yaman");
+
+TEST(SaFinder, NothingYet) {
+  SaFinder finder(kYaman);
+  EXPECT_EQ(finder.status().sa, 0);
+  EXPECT_FALSE(finder.status().confident);
+}
+
+TEST(SaFinder, ConfidentOnceThereAreEnoughHeldNotes) {
+  const std::vector<PitchFrame> frames = Yaman(12);
+  SaFinder finder(kYaman);
+  double confident_at = 0;
+  // In one-second chunks, as the app adds them.
+  for (size_t at = 0; at < frames.size(); at += 100) {
+    finder.Add(std::span(frames).subspan(at, std::min<size_t>(100, frames.size() - at)));
+    if (finder.status().confident && confident_at == 0) confident_at = frames[at].time;
+  }
+  const SaStatus& status = finder.status();
+  EXPECT_TRUE(status.confident);
+  EXPECT_NEAR(std::remainder(CentsFromSa(status.sa, kSa), 1200), 0, 5);
+  EXPECT_GT(status.margin, 0.1);
+  EXPECT_GE(status.held_seconds, 60);
+  // Not before 45 s of held notes, which takes about 60 s with the rests.
+  EXPECT_GT(confident_at, 55);
+}
+
+TEST(SaFinder, NotConfidentWithTooFewHeldNotes) {
+  const std::vector<PitchFrame> frames = Yaman(3);
+  SaFinder finder(kYaman);
+  finder.Add(frames);
+  EXPECT_NEAR(std::remainder(CentsFromSa(finder.status().sa, kSa), 1200), 0, 5);
+  EXPECT_FALSE(finder.status().confident);
+}
+
+}  // namespace
+}  // namespace raagasense

@@ -19,10 +19,15 @@ constexpr double kKeepSeconds = 60;
 
 struct LivePitch::Impl {
   AVAudioEngine* engine = nil;
+  double sample_rate = 0;
   mutable std::mutex mutex;
   std::unique_ptr<MelodyTracker> tracker;
   std::deque<PitchFrame> frames;
   double now = 0;
+  // The recording in progress, if any, written on the tap's thread.
+  std::mutex file_mutex;
+  AVAudioFile* file = nil;
+  int64_t recorded = 0;
 
   // On the tap's thread: mixes the buffer to mono and tracks its pitch.
   void Process(AVAudioPCMBuffer* buffer) {
@@ -32,6 +37,16 @@ struct LivePitch::Impl {
     for (AVAudioChannelCount c = 0; c < channels; ++c) {
       const float* data = buffer.floatChannelData[c];
       for (AVAudioFrameCount i = 0; i < count; ++i) mono[i] += data[i] / channels;
+    }
+    {
+      std::lock_guard lock(file_mutex);
+      if (file) {
+        AVAudioPCMBuffer* copy = [[AVAudioPCMBuffer alloc] initWithPCMFormat:file.processingFormat frameCapacity:count];
+        copy.frameLength = count;
+        std::copy(mono.begin(), mono.end(), copy.floatChannelData[0]);
+        [file writeFromBuffer:copy error:nil];
+        recorded += count;
+      }
     }
     // Only this thread touches the tracker once the tap is installed.
     std::vector<PitchFrame> added;
@@ -76,6 +91,7 @@ struct LivePitch::Impl {
       frames.clear();
       now = 0;
     }
+    sample_rate = format.sampleRate;
     Impl* self = this;
     [input installTapOnBus:0 bufferSize:1024 format:format block:^(AVAudioPCMBuffer* buffer, AVAudioTime*) {
       self->Process(buffer);
@@ -122,12 +138,57 @@ void LivePitch::Start(const std::string& input_id, std::function<void(const std:
 
 void LivePitch::Stop() {
   if (!impl_->engine) return;
+  StopRecording();
   [impl_->engine.inputNode removeTapOnBus:0];
   [impl_->engine stop];
   impl_->engine = nil;
 }
 
 bool LivePitch::running() const { return impl_->engine != nil; }
+
+std::string LivePitch::StartRecording(const std::string& path) {
+  if (!running()) return "Not listening.";
+  NSString* output = @(path.c_str());
+  NSString* extension = output.pathExtension.lowercaseString;
+  NSDictionary* settings;
+  if ([extension isEqualToString:@"m4a"]) {
+    settings = @{
+      AVFormatIDKey : @(kAudioFormatMPEG4AAC),
+      AVSampleRateKey : @(impl_->sample_rate),
+      AVNumberOfChannelsKey : @1,
+      AVEncoderBitRateKey : @128000,
+    };
+  } else if ([@[ @"wav", @"aiff", @"aif", @"caf" ] containsObject:extension]) {
+    settings = @{
+      AVFormatIDKey : @(kAudioFormatLinearPCM),
+      AVSampleRateKey : @(impl_->sample_rate),
+      AVNumberOfChannelsKey : @1,
+      AVLinearPCMBitDepthKey : @24,
+      AVLinearPCMIsFloatKey : @NO,
+      AVLinearPCMIsBigEndianKey : @([extension hasPrefix:@"aif"]),
+    };
+  } else {
+    return "Recordings must end in .m4a, .wav, .aiff or .caf.";
+  }
+  NSError* error = nil;
+  AVAudioFile* file = [[AVAudioFile alloc] initForWriting:[NSURL fileURLWithPath:output]
+                                                 settings:settings
+                                             commonFormat:AVAudioPCMFormatFloat32
+                                              interleaved:NO
+                                                    error:&error];
+  if (!file) return error.localizedDescription.UTF8String;
+  std::lock_guard lock(impl_->file_mutex);
+  impl_->file = file;
+  impl_->recorded = 0;
+  return "";
+}
+
+double LivePitch::StopRecording() {
+  std::lock_guard lock(impl_->file_mutex);
+  if (!impl_->file) return 0;
+  impl_->file = nil;  // Closes it.
+  return impl_->sample_rate > 0 ? impl_->recorded / impl_->sample_rate : 0;
+}
 
 std::vector<PitchFrame> LivePitch::Recent(double seconds) const {
   std::lock_guard lock(impl_->mutex);

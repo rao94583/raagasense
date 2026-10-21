@@ -26,4 +26,8 @@ struct RaagMatch {
 // Each known raag's best match, best first; empty without notes.
 std::vector<RaagMatch> IdentifyRaag(std::span<const SteadyNote> notes);
 
+// The matches for a known raag from each candidate Sa, best first; empty
+// without notes.
+std::vector<RaagMatch> MatchRaag(std::span<const SteadyNote> notes, const Raag& raag);
+
 }  // namespace raagasense
