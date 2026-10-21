@@ -8,8 +8,9 @@
 // Sa, if any, from a note later in it (bilawal_male_C_sharp.m4a). For each
 // recording it prints the Sa estimated knowing the raag, with how much of the
 // held time fits the raag from it, and the same for the next best Sa; the Sa
-// estimated without knowing the raag; and how much of the recording is held
-// notes. A small gap between the two fits means the Sa is uncertain.
+// estimated without knowing the raag; how much of the recording is held
+// notes; and the app's guess at the raag, with where the true raag ranks among
+// its guesses. A small gap between the two fits means the Sa is uncertain.
 #include <unistd.h>
 
 #include <algorithm>
@@ -23,6 +24,7 @@
 #include <string>
 #include <vector>
 
+#include "core/identify.h"
 #include "core/melody.h"
 #include "core/raag.h"
 #include "core/steady.h"
@@ -164,9 +166,10 @@ int main(int argc, char** argv) {
   }
   std::sort(files.begin(), files.end());
 
-  std::printf("%-40s %-26s %-10s  %-10s %4s  %-10s %4s  %-10s %5s\n", "file", "raag", "label Sa", "Sa | raag",
-              "fit", "next Sa", "fit", "Sa alone", "held");
+  std::printf("%-40s %-26s %-10s  %-10s %4s  %-10s %4s  %-10s %5s  %-26s %4s\n", "file", "raag", "label Sa",
+              "Sa | raag", "fit", "next Sa", "fit", "Sa alone", "held", "raag guess", "rank");
   int labeled = 0, right_with_raag = 0, right_alone = 0;
+  int identified = 0, first = 0, top3 = 0, same_svaras = 0;
   for (const std::filesystem::path& file : files) {
     const std::string name = file.filename().string();
     const auto label = labels.find(name);
@@ -209,17 +212,33 @@ int main(int argc, char** argv) {
       mark_with = with_ok ? " " : "x";
       mark_alone = alone_ok ? " " : "x";
     }
+    const std::vector<RaagMatch> matches = IdentifyRaag(notes);
+    const int rank = static_cast<int>(
+        std::find_if(matches.begin(), matches.end(), [&](const RaagMatch& m) { return m.raag == raag; }) -
+        matches.begin()) + 1;
+    ++identified;
+    first += rank == 1;
+    top3 += rank <= 3;
+    same_svaras += matches[0].raag->svaras == raag->svaras;
+    // "~" marks a wrong guess with the true raag's svaras.
+    const std::string guess = (rank == 1 ? " " : matches[0].raag->svaras == raag->svaras ? "~" : "x") +
+                              matches[0].raag->name;
+
     const bool has_next = with_raag.size() > 1;
-    std::printf("%-40s %-26s %-10s %s%-10s %3.0f%%  %-10s %3.0f%% %s%-10s %4.0f%%\n", name.c_str(),
+    std::printf("%-40s %-26s %-10s %s%-10s %3.0f%%  %-10s %3.0f%% %s%-10s %4.0f%%  %-26s %4d\n", name.c_str(),
                 raag->name.c_str(), labeled_sa > 0 ? NoteName(labeled_sa).c_str() : "?", mark_with.c_str(),
                 NoteName(with_raag[0].frequency).c_str(), 100 * with_raag[0].score,
                 has_next ? NoteName(with_raag[1].frequency).c_str() : "-", has_next ? 100 * with_raag[1].score : 0.0,
                 mark_alone.c_str(), NoteName(alone[0].frequency).c_str(),
-                100 * held / (audio->samples.size() / audio->sample_rate));
+                100 * held / (audio->samples.size() / audio->sample_rate), guess.c_str(), rank);
   }
   if (labeled > 0) {
     std::printf("\nSa right on %d of %d labeled recordings knowing the raag, %d without (x marks a miss).\n",
                 right_with_raag, labeled, right_alone);
+  }
+  if (identified > 0) {
+    std::printf("Raag named first on %d of %d, in the top 3 on %d; the first guess has the true raag's svaras on %d.\n",
+                first, identified, top3, same_svaras);
   }
   return 0;
 }
