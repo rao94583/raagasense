@@ -1,7 +1,9 @@
 // Finds Sa as a performance of a known raag comes in, and says when it's sure
 // enough: when there are enough held notes, the best Sa has held its place for
 // a while, and either the raag matches clearly better from it than from the
-// next best Sa or it has held its place for much longer.
+// next best Sa or it has held its place for much longer. It also follows which
+// of the raag's svaras have been heard from that Sa, and can hold off saying
+// it's done until all those the raag can't do without have been.
 #pragma once
 
 #include <span>
@@ -24,6 +26,12 @@ struct SaFinderOptions {
   double min_margin = 0.1;
   // ...or with any lead.
   double long_stable_seconds = 90;
+  // A svara counts as heard once it has this share of the held time.
+  double heard_share = 0.01;
+  // Whether being done also waits, once sure of Sa, for every svara the raag
+  // can't do without to be heard, and for at most how many seconds more.
+  bool wait_for_svaras = false;
+  double max_wait_seconds = 120;
 };
 
 struct SaStatus {
@@ -35,6 +43,13 @@ struct SaStatus {
   // How long this Sa has been the best, in seconds of the stream.
   double stable_seconds = 0;
   bool confident = false;
+  // The share of the held time on each svara from this Sa, and the svaras
+  // the raag can't do without that haven't been heard yet.
+  double shares[12] = {};
+  std::vector<int> missing;
+  // Sure of Sa and, if waiting for them, all the svaras heard or waited for
+  // long enough.
+  bool done = false;
 };
 
 class SaFinder {
@@ -51,8 +66,10 @@ class SaFinder {
   SaFinderOptions options_;
   std::vector<PitchFrame> frames_;
   SaStatus status_;
-  // The stream time when the current best Sa became the best.
+  // The stream times when the current best Sa became the best, and when the
+  // finder became sure of it.
   double best_since_ = 0;
+  double confident_since_ = 0;
 };
 
 }  // namespace raagasense

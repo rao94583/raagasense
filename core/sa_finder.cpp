@@ -1,5 +1,6 @@
 #include "core/sa_finder.h"
 
+#include <algorithm>
 #include <cmath>
 
 #include "core/identify.h"
@@ -29,6 +30,20 @@ void SaFinder::Add(std::span<const PitchFrame> frames) {
   status.confident = status.sa > 0 && status.held_seconds >= options_.min_held_seconds &&
                      ((status.margin >= options_.min_margin && status.stable_seconds >= options_.stable_seconds) ||
                       (status.margin > 0 && status.stable_seconds >= options_.long_stable_seconds));
+  if (status.confident && !status_.confident) confident_since_ = now;
+
+  if (status.sa > 0) {
+    for (const SteadyNote& note : notes) {
+      status.shares[NearestSvara(CentsFromSa(note.frequency, status.sa)).svara] +=
+          (note.end - note.start) / status.held_seconds;
+    }
+    for (int svara : raag_.svaras) {
+      const bool occasional = std::find(raag_.occasional.begin(), raag_.occasional.end(), svara) != raag_.occasional.end();
+      if (!occasional && status.shares[svara] < options_.heard_share) status.missing.push_back(svara);
+    }
+  }
+  status.done = status.confident && (!options_.wait_for_svaras || status.missing.empty() ||
+                                     now - confident_since_ >= options_.max_wait_seconds);
   status_ = status;
 }
 

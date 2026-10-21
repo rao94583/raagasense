@@ -20,6 +20,7 @@ NSString* const kRaagKey = @"SampleRaag";
 NSString* const kOtherRaagsKey = @"SampleOtherRaags";
 NSString* const kOtherRaagItem = @"Other Raag…";
 NSString* const kPerformerKey = @"SamplePerformer";
+NSString* const kWaitKey = @"SampleWaitForSvaras";
 
 // How often the status updates, in seconds.
 constexpr double kTick = 0.5;
@@ -56,6 +57,13 @@ std::optional<std::vector<int>> ParseSvaras(NSString* text) {
   }
   std::sort(svaras.begin(), svaras.end());
   return svaras;
+}
+
+// The svaras as Bhatkhande letters separated by spaces.
+NSString* Letters(const std::vector<int>& svaras) {
+  NSMutableArray<NSString*>* letters = [NSMutableArray array];
+  for (int svara : svaras) [letters addObject:@(std::string(raagasense::SvaraLetter(svara)).c_str())];
+  return [letters componentsJoinedByString:@" "];
 }
 
 // Lower case letters and digits, with anything else as single underscores.
@@ -97,6 +105,7 @@ NSString* MinutesAndSeconds(double seconds) {
   NSPopUpButton* _raagPopUp;
   NSComboBox* _performerBox;
   NSTextField* _artistField;
+  NSButton* _waitCheckbox;
   NSTextField* _folderLabel;
   NSTextField* _statusLabel;
   NSProgressIndicator* _progress;
@@ -161,10 +170,21 @@ NSString* MinutesAndSeconds(double seconds) {
   NSStackView* folderRow = [NSStackView stackViewWithViews:@[ _folderLabel, chooseButton ]];
   [self showFolder];
 
+  const double max_wait = raagasense::SaFinderOptions().max_wait_seconds;
+  _waitCheckbox = [NSButton
+      checkboxWithTitle:[NSString stringWithFormat:@"Wait for all the raag's svaras, up to %.0f minutes more",
+                                                   max_wait / 60]
+                 target:nil
+                 action:nil];
+  _waitCheckbox.state = [defaults boolForKey:kWaitKey] ? NSControlStateValueOn : NSControlStateValueOff;
+  _waitCheckbox.toolTip = @"Once sure of Sa, keep recording until every svara the raag can't do without has been "
+                          @"heard";
+
   NSGridView* form = [NSGridView gridViewWithViews:@[
     @[ [NSTextField labelWithString:@"Raag:"], _raagPopUp ],
     @[ [NSTextField labelWithString:@"Performer:"], _performerBox ],
     @[ [NSTextField labelWithString:@"Artist:"], _artistField ],
+    @[ [NSGridCell emptyContentView], _waitCheckbox ],
     @[ [NSTextField labelWithString:@"Save in:"], folderRow ],
   ]];
   [form columnAtIndex:0].xPlacement = NSGridCellPlacementTrailing;
@@ -332,7 +352,9 @@ NSString* MinutesAndSeconds(double seconds) {
 }
 
 - (void)setRecording:(BOOL)recording {
-  for (NSControl* control in @[ _raagPopUp, _performerBox, _artistField, _startButton ]) control.enabled = !recording;
+  for (NSControl* control in @[ _raagPopUp, _performerBox, _artistField, _waitCheckbox, _startButton ]) {
+    control.enabled = !recording;
+  }
   _stopButton.enabled = recording;
   _discardButton.enabled = recording;
 }
@@ -360,6 +382,7 @@ NSString* MinutesAndSeconds(double seconds) {
   NSUserDefaults* defaults = NSUserDefaults.standardUserDefaults;
   [defaults setObject:_raagPopUp.titleOfSelectedItem forKey:kRaagKey];
   [defaults setObject:_performerBox.stringValue forKey:kPerformerKey];
+  [defaults setBool:_waitCheckbox.state == NSControlStateValueOn forKey:kWaitKey];
 
   [self setRecording:YES];
   __weak RSSampleRecorder* weakSelf = self;
@@ -377,7 +400,9 @@ NSString* MinutesAndSeconds(double seconds) {
 
 - (void)beginRecording {
   _raag = [self chosenRaag];
-  _finder = _raag.svaras.empty() ? nullptr : std::make_unique<raagasense::SaFinder>(_raag);
+  raagasense::SaFinderOptions options;
+  options.wait_for_svaras = _waitCheckbox.state == NSControlStateValueOn;
+  _finder = _raag.svaras.empty() ? nullptr : std::make_unique<raagasense::SaFinder>(_raag, options);
   _partialPath = [self.folder stringByAppendingPathComponent:@".recording.m4a"];
   const std::string error = _livePitch->StartRecording(_partialPath.UTF8String);
   if (!error.empty()) {
@@ -411,7 +436,7 @@ NSString* MinutesAndSeconds(double seconds) {
     if (_finder) _finder->Add(fresh);
   }
   [self update];
-  if (_finder && _finder->status().confident) [self finish:YES];
+  if (_finder && _finder->status().done) [self finish:YES];
 }
 
 - (void)update {
@@ -424,10 +449,20 @@ NSString* MinutesAndSeconds(double seconds) {
   const raagasense::SaStatus& status = _finder->status();
   const double needed = raagasense::SaFinderOptions().min_held_seconds;
   _progress.doubleValue = std::min(1.0, status.held_seconds / needed);
-  NSString* sa = status.sa > 0 && status.held_seconds >= kShowSaAfter
-                     ? [NSString stringWithFormat:@"Sa looks like %@, for the last %.0f s.", ShownNote(status.sa),
-                                                  status.stable_seconds]
-                     : @"No Sa yet.";
+  NSString* sa = @"No Sa yet.";
+  if (status.sa > 0 && status.held_seconds >= kShowSaAfter) {
+    // The raag's svaras heard so far from this Sa, and those it can't do
+    // without still to come.
+    std::vector<int> heard;
+    for (int svara : _raag.svaras) {
+      if (status.shares[svara] >= raagasense::SaFinderOptions().heard_share) heard.push_back(svara);
+    }
+    sa = [NSString stringWithFormat:@"Sa looks like %@%@, for the last %.0f s.\nHeard: %@%@", ShownNote(status.sa),
+                                    status.confident ? @" (sure)" : @"", status.stable_seconds, Letters(heard),
+                                    status.missing.empty()
+                                        ? @""
+                                        : [NSString stringWithFormat:@" · not yet: %@", Letters(status.missing)]];
+  }
   _statusLabel.stringValue =
       [NSString stringWithFormat:@"Recording %@ of %@. Held notes so far: %.0f s of the %.0f s needed.\n%@",
                                  MinutesAndSeconds(_lastTime - _startTime), @(_raag.name.c_str()), status.held_seconds,
@@ -490,6 +525,9 @@ NSString* MinutesAndSeconds(double seconds) {
     [notes appendFormat:@"; not in the app's raags%@",
                         letters.empty() ? @"" : [NSString stringWithFormat:@", svaras %s", letters.c_str()]];
   }
+  if (_finder && status.sa > 0 && !status.missing.empty()) {
+    [notes appendFormat:@"; svaras not heard: %@", Letters(status.missing)];
+  }
   if (artist.length > 0) [notes appendFormat:@"; artist %@", _artistField.stringValue];
   NSString* labels = [self.folder stringByAppendingPathComponent:@"labels.csv"];
   NSMutableString* row = [NSMutableString string];
@@ -509,7 +547,11 @@ NSString* MinutesAndSeconds(double seconds) {
   _statusLabel.stringValue = [NSString
       stringWithFormat:@"Saved %@ (%@).\n%@", name, MinutesAndSeconds(seconds),
                        status.sa > 0 && status.held_seconds >= kShowSaAfter
-                           ? [NSString stringWithFormat:@"Sa %@, %@. Please check it by ear.", ShownNote(status.sa), sure]
+                           ? [NSString stringWithFormat:@"Sa %@, %@%@. Please check it by ear.", ShownNote(status.sa), sure,
+                                                        status.missing.empty()
+                                                            ? @""
+                                                            : [NSString stringWithFormat:@"; not heard: %@",
+                                                                                         Letters(status.missing)]]
                            : _finder ? @"No Sa: too few held notes." : @"No Sa: the raag's svaras weren't given."];
 }
 

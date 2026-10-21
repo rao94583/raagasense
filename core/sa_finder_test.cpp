@@ -21,16 +21,26 @@ void Hold(std::vector<PitchFrame>* frames, double cents, double seconds) {
   for (double t = 0; t < 0.3; t += kHop) frames->push_back({start + seconds + t, 0, 0, false});
 }
 
-// Yaman phrases, about 6 s of held notes each.
-std::vector<PitchFrame> Yaman(int phrases) {
+// Yaman phrases, about 6 s of held notes each; without Dha, 5.5 s.
+std::vector<PitchFrame> Yaman(int phrases, bool dha = true) {
   std::vector<PitchFrame> frames;
   for (int i = 0; i < phrases; ++i) {
     for (auto [cents, seconds] : {std::pair{-100, 0.6}, {200, 0.5}, {400, 1.0}, {600, 0.4}, {700, 1.2}, {900, 0.5},
                                   {1100, 0.6}, {0, 1.2}}) {
-      Hold(&frames, cents, seconds);
+      if (cents != 900 || dha) Hold(&frames, cents, seconds);
     }
   }
   return frames;
+}
+
+// The stream time when the finder is done, adding frames a second at a time;
+// 0 if never.
+double DoneAt(SaFinder& finder, const std::vector<PitchFrame>& frames) {
+  for (size_t at = 0; at < frames.size(); at += 100) {
+    finder.Add(std::span(frames).subspan(at, std::min<size_t>(100, frames.size() - at)));
+    if (finder.status().done) return frames[std::min(at + 99, frames.size() - 1)].time;
+  }
+  return 0;
 }
 
 const Raag& kYaman = *FindRaag("Yaman");
@@ -65,6 +75,31 @@ TEST(SaFinder, NotConfidentWithTooFewHeldNotes) {
   finder.Add(frames);
   EXPECT_NEAR(std::remainder(CentsFromSa(finder.status().sa, kSa), 1200), 0, 5);
   EXPECT_FALSE(finder.status().confident);
+}
+
+TEST(SaFinder, FollowsTheSvarasHeard) {
+  SaFinder finder(kYaman);
+  finder.Add(Yaman(10, /*dha=*/false));
+  const SaStatus& status = finder.status();
+  EXPECT_EQ(status.missing, std::vector<int>{kDha});
+  EXPECT_EQ(status.shares[kDha], 0);
+  EXPECT_NEAR(status.shares[kPa], 1.2 * 10 / status.held_seconds, 0.01);
+}
+
+TEST(SaFinder, DoneWhenSureUnlessWaitingForSvaras) {
+  SaFinderOptions waiting;
+  waiting.wait_for_svaras = true;
+  // With all the svaras, waiting changes nothing.
+  SaFinder all(kYaman), all_waiting(kYaman, waiting);
+  const double all_done = DoneAt(all, Yaman(14));
+  EXPECT_GT(all_done, 0);
+  EXPECT_EQ(DoneAt(all_waiting, Yaman(14)), all_done);
+  // Without Dha, waiting holds off for max_wait_seconds once sure.
+  SaFinder no_dha(kYaman), no_dha_waiting(kYaman, waiting);
+  const double sure = DoneAt(no_dha, Yaman(40, false));
+  EXPECT_GT(sure, 0);
+  EXPECT_NEAR(DoneAt(no_dha_waiting, Yaman(40, false)), sure + waiting.max_wait_seconds, 1.5);
+  EXPECT_EQ(no_dha_waiting.status().missing, std::vector<int>{kDha});
 }
 
 }  // namespace
