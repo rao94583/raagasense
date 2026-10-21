@@ -164,7 +164,7 @@ int main(int argc, char** argv) {
   }
   std::sort(files.begin(), files.end());
 
-  std::printf("%-40s %-18s %-10s  %-10s %4s  %-10s %4s  %-10s %5s\n", "file", "raag", "label Sa", "Sa | raag",
+  std::printf("%-40s %-26s %-10s  %-10s %4s  %-10s %4s  %-10s %5s\n", "file", "raag", "label Sa", "Sa | raag",
               "fit", "next Sa", "fit", "Sa alone", "held");
   int labeled = 0, right_with_raag = 0, right_alone = 0;
   for (const std::filesystem::path& file : files) {
@@ -195,7 +195,7 @@ int main(int argc, char** argv) {
     const std::vector<TonicCandidate> with_raag = EstimateTonicForSvaras(notes, raag->svaras);
     const std::vector<TonicCandidate> alone = EstimateTonic(notes);
     if (with_raag.empty()) {
-      std::printf("%-40s %-18s no held notes\n", name.c_str(), raag->name.c_str());
+      std::printf("%-40s %-26s no held notes\n", name.c_str(), raag->name.c_str());
       continue;
     }
 
@@ -210,7 +210,7 @@ int main(int argc, char** argv) {
       mark_alone = alone_ok ? " " : "x";
     }
     const bool has_next = with_raag.size() > 1;
-    std::printf("%-40s %-18s %-10s %s%-10s %3.0f%%  %-10s %3.0f%% %s%-10s %4.0f%%\n", name.c_str(),
+    std::printf("%-40s %-26s %-10s %s%-10s %3.0f%%  %-10s %3.0f%% %s%-10s %4.0f%%\n", name.c_str(),
                 raag->name.c_str(), labeled_sa > 0 ? NoteName(labeled_sa).c_str() : "?", mark_with.c_str(),
                 NoteName(with_raag[0].frequency).c_str(), 100 * with_raag[0].score,
                 has_next ? NoteName(with_raag[1].frequency).c_str() : "-", has_next ? 100 * with_raag[1].score : 0.0,

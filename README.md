@@ -46,6 +46,6 @@ session, and the plot draws into any Core Graphics context).
 - [x] Tonic (Sa) estimate from held Sa and Pa, in the tools
 - [ ] Tonic for raagas without Pa, and in the app
 - [ ] Andolan, and meends as transitions between svaras
-- [x] Svaras of 29 raags, and Sa from a known raag
+- [x] Svaras of 30 raags (29 names, one in two forms), and Sa from a known raag
 - [ ] Raaga knowledge base (emphasis, phrases) and scoring
 - [ ] iOS app

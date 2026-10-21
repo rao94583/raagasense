@@ -40,6 +40,8 @@ const std::vector<Raag>& AllRaags() {
       {"Desh", Svaras("S R G m P D n N")},
       {"Deshkar", Svaras("S R G P D")},
       {"Dhanashree", Svaras("S R g m P D n")},
+      // A rarer form in some gharanas, sung by Ulhas Kashalkar among others.
+      {"Dhanashree (Bilawal thaat)", Svaras("S R G m P D N")},
       {"Dhani", Svaras("S g m P n")},
       {"Durga", Svaras("S R m P D")},
       {"Gurjari Todi", Svaras("S r g M d N")},

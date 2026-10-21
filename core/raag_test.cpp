@@ -28,6 +28,8 @@ TEST(Raags, Find) {
   EXPECT_EQ(FindRaag("miyan_ki_todi"), FindRaag("Miyan ki Todi"));
   EXPECT_EQ(FindRaag("YAMAN")->name, "Yaman");
   EXPECT_EQ(FindRaag("Raag Imaginary"), nullptr);
+  ASSERT_NE(FindRaag("Dhanashree (Bilawal thaat)"), nullptr);
+  EXPECT_NE(FindRaag("Dhanashree (Bilawal thaat)"), FindRaag("Dhanashree"));
 }
 
 TEST(Raags, Svaras) {

@@ -10,6 +10,8 @@
 namespace raagasense {
 
 struct Raag {
+  // The common name, followed for a less common form of a raag by what tells
+  // it apart: "Dhanashree (Bilawal thaat)".
   std::string name;
   // Svara values, in ascending order: every svara the raag uses, including
   // ones it only touches.
