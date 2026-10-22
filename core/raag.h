@@ -1,8 +1,9 @@
 // What the app knows about each raag: its svaras, which of them it uses only
-// sparingly, its vadi and samvadi, and which it leaves out going up or down. The list covers the raags of the
-// NCPA's AUTRIM project (autrimncpa.wordpress.com), whose notes on each raag
-// were checked for the svaras, and a few more; characteristic phrases come
-// later.
+// sparingly, its vadi and samvadi, which it leaves out going up or down, and
+// whether it's seldom performed. The list covers the raags of the NCPA's
+// AUTRIM project (autrimncpa.wordpress.com) and common ones from tanarang.com,
+// whose notes on each raag were checked for the svaras, and a few more;
+// characteristic phrases come later.
 #pragma once
 
 #include <span>
@@ -32,6 +33,8 @@ struct Raag {
   // its svaras, or where that isn't recorded.
   std::vector<int> ascent;
   std::vector<int> descent;
+  // Seldom performed, so less likely to be what's playing.
+  bool rare = false;
 };
 
 // Every raag the app knows, in alphabetical order.

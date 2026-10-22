@@ -31,6 +31,11 @@ constexpr double kSaPaWeight = 0.5;
 // model with no direction. On the 59 labeled recordings, weights from 4 to 16
 // put the true raag in the top 3 on 33 to 37, against 30 without; 8 is best.
 constexpr double kDirectionWeight = 8;
+// What naming a rarely performed raag costs, so that it takes more evidence
+// than a common one with the same svaras. With 122 raags, 28 of them rare,
+// penalties from 0.1 to 0.4 name 20 of the 59 labeled recordings first,
+// against 18 with none.
+constexpr double kRarePenalty = 0.2;
 // Passing notes further apart than this, in seconds, aren't in one phrase.
 constexpr double kPhraseGap = 0.6;
 // A move between passing notes is up or down when it's at least this many
@@ -74,7 +79,7 @@ double Score(const Raag& raag, const Shares& shares, double sa_and_pa) {
   Likelihoods(raag, weight, {}, likely);
   Likelihoods(raag, weight, raag.ascent, up);
   Likelihoods(raag, weight, raag.descent, down);
-  double score = kSaPaWeight * sa_and_pa;
+  double score = kSaPaWeight * sa_and_pa - (raag.rare ? kRarePenalty : 0);
   for (int svara = 0; svara < 12; ++svara) {
     score += shares.held[svara] * std::log(likely[svara]);
     const bool essential =

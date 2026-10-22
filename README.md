@@ -47,7 +47,7 @@ session, and the plot draws into any Core Graphics context).
 - [x] Tonic (Sa) estimate from held Sa and Pa, in the tools
 - [ ] Tonic for raagas without Pa, and in the app
 - [ ] Andolan, and meends as transitions between svaras
-- [x] Svaras of 91 raags (the NCPA AUTRIM list and a few more), and Sa from a known raag
+- [x] Svaras of 122 raags (the NCPA AUTRIM list, common raags from tanarang.com, and more; 28 marked rare), and Sa from a known raag
 - [x] Naming the raag from held notes: svaras, occasional svaras, vadi
 - [x] Svaras left out going up or down (39 raags so far)
 - [ ] Characteristic phrases, for raags with the same svaras
