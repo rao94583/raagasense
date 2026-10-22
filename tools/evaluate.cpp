@@ -1,11 +1,12 @@
 // Checks the analysis against a folder of labeled recordings.
 //
-//   bazel run //tools:evaluate -- [DIRECTORY]
+//   bazel run //tools:evaluate -- [--all-sa] [DIRECTORY...]
 //
-// DIRECTORY (by default recordings/) holds audio files and, optionally,
+// Each DIRECTORY (by default recordings/) holds audio files and, optionally,
 // labels.csv with columns file,raag,sa_hz and, optionally, sa_checked. A Sa
 // with sa_checked "no", such as one the app found while recording, doesn't
-// count in checking Sa, and sa_hz 0 means Sa is unknown. A file missing from
+// count in checking Sa unless --all-sa is given, and sa_hz 0 means Sa is
+// unknown. A file missing from
 // labels.csv takes its raag from the start of its name (miyan_ki_todi_male.m4a) and its
 // Sa, if any, from a note later in it (bilawal_male_C_sharp.m4a). For each
 // recording it prints the Sa estimated knowing the raag, with how much of the
@@ -19,6 +20,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -59,9 +61,10 @@ std::vector<std::string> CsvFields(const std::string& line) {
   return fields;
 }
 
-std::map<std::string, Label> ReadLabels(const std::filesystem::path& path) {
-  std::map<std::string, Label> labels;
-  std::ifstream in(path);
+// The labels in a directory's labels.csv, by the files' paths; with
+// all_sa, Sas not checked by ear count too.
+void ReadLabels(const std::filesystem::path& directory, bool all_sa, std::map<std::string, Label>* labels) {
+  std::ifstream in(directory / "labels.csv");
   std::string line;
   std::getline(in, line);
   const std::vector<std::string> header = CsvFields(line);
@@ -69,10 +72,9 @@ std::map<std::string, Label> ReadLabels(const std::filesystem::path& path) {
   while (std::getline(in, line)) {
     const std::vector<std::string> fields = CsvFields(line);
     if (fields.size() < 3) continue;
-    const bool unchecked = checked < fields.size() && fields[checked] == "no";
-    labels[fields[0]] = {fields[1], unchecked ? 0 : std::atof(fields[2].c_str())};
+    const bool unchecked = !all_sa && checked < fields.size() && fields[checked] == "no";
+    (*labels)[(directory / fields[0]).string()] = {fields[1], unchecked ? 0 : std::atof(fields[2].c_str())};
   }
-  return labels;
 }
 
 std::string Lower(std::string text) {
@@ -154,27 +156,40 @@ bool SamePitchClass(double a, double b) { return std::abs(std::remainder(CentsFr
 int main(int argc, char** argv) {
   // Under bazel run, make relative paths relative to where it was run.
   if (const char* directory = std::getenv("BUILD_WORKING_DIRECTORY")) chdir(directory);
-  if (argc > 2) {
-    std::fprintf(stderr, "usage: evaluate [DIRECTORY]\n");
-    return 2;
-  }
-  const std::filesystem::path directory = argc > 1 ? argv[1] : "recordings";
-  const std::map<std::string, Label> labels = ReadLabels(directory / "labels.csv");
-
-  std::vector<std::filesystem::path> files;
-  std::error_code error_code;
-  for (const auto& entry : std::filesystem::directory_iterator(directory, error_code)) {
-    const std::string extension = Lower(entry.path().extension().string());
-    if (extension == ".m4a" || extension == ".mp3" || extension == ".wav" || extension == ".aiff" ||
-        extension == ".aif" || extension == ".caf") {
-      files.push_back(entry.path());
+  bool all_sa = false;
+  std::vector<std::filesystem::path> directories;
+  for (int i = 1; i < argc; ++i) {
+    if (!std::strcmp(argv[i], "--all-sa")) {
+      all_sa = true;
+    } else if (argv[i][0] == '-') {
+      std::fprintf(stderr, "usage: evaluate [--all-sa] [DIRECTORY...]\n");
+      return 2;
+    } else {
+      directories.push_back(argv[i]);
     }
   }
-  if (error_code) {
-    std::fprintf(stderr, "%s: %s\n", directory.c_str(), error_code.message().c_str());
-    return 1;
+  if (directories.empty()) directories.push_back("recordings");
+
+  std::map<std::string, Label> labels;
+  std::vector<std::filesystem::path> files;
+  for (const std::filesystem::path& directory : directories) {
+    ReadLabels(directory, all_sa, &labels);
+    std::vector<std::filesystem::path> here;
+    std::error_code error_code;
+    for (const auto& entry : std::filesystem::directory_iterator(directory, error_code)) {
+      const std::string extension = Lower(entry.path().extension().string());
+      if (extension == ".m4a" || extension == ".mp3" || extension == ".wav" || extension == ".aiff" ||
+          extension == ".aif" || extension == ".caf") {
+        here.push_back(entry.path());
+      }
+    }
+    if (error_code) {
+      std::fprintf(stderr, "%s: %s\n", directory.c_str(), error_code.message().c_str());
+      return 1;
+    }
+    std::sort(here.begin(), here.end());
+    files.insert(files.end(), here.begin(), here.end());
   }
-  std::sort(files.begin(), files.end());
 
   std::printf("%-40s %-26s %-10s  %-10s %4s  %-10s %4s  %-10s %5s  %-26s %4s\n", "file", "raag", "label Sa",
               "Sa | raag", "fit", "next Sa", "fit", "Sa alone", "held", "raag guess", "rank");
@@ -182,7 +197,7 @@ int main(int argc, char** argv) {
   int identified = 0, first = 0, top3 = 0, same_svaras = 0;
   for (const std::filesystem::path& file : files) {
     const std::string name = file.filename().string();
-    const auto label = labels.find(name);
+    const auto label = labels.find(file.string());
     const Raag* raag = label != labels.end() ? FindRaag(label->second.raag) : RaagFromName(file.stem().string());
     const double labeled_sa = label != labels.end() ? label->second.sa : SaFromName(file.stem().string());
     if (!raag) {

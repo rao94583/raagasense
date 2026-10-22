@@ -16,7 +16,7 @@ bazel run //tools:analyze -- --tonic recording.mp3           # candidates for Sa
 bazel run //tools:analyze -- --tonic --svaras "S g m d n" recording.mp3  # ...knowing the raag
 bazel run //tools:analyze -- --csv recording.mp3             # per-frame pitch
 bazel run //tools:plot -- recording.mp3 out.png              # pitch over svara grid
-bazel run //tools:evaluate                                   # check against recordings/
+bazel run //tools:evaluate -- recordings ~/Music/RaagaSense\ Samples  # check against labeled folders
 bazel run //tools:record -- --list                           # sound inputs
 bazel run //tools:record -- --input M2 --channels 3,4 recordings/yaman.m4a
 ```
