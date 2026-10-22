@@ -16,7 +16,7 @@ void SaFinder::Add(std::span<const PitchFrame> frames) {
   const double now = frames_.back().time;
 
   const std::vector<SteadyNote> notes = HeldPitches(frames_);
-  const std::vector<RaagMatch> matches = MatchRaag(notes, raag_);
+  const std::vector<RaagMatch> matches = MatchRaag(notes, raag_, PassingNotes(frames_));
   SaStatus status;
   for (const SteadyNote& note : notes) status.held_seconds += note.end - note.start;
   if (!matches.empty()) {

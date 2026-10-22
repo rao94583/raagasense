@@ -237,7 +237,7 @@ int main(int argc, char** argv) {
       mark_with = with_ok ? " " : "x";
       mark_alone = alone_ok ? " " : "x";
     }
-    const std::vector<RaagMatch> matches = IdentifyRaag(notes);
+    const std::vector<RaagMatch> matches = IdentifyRaag(notes, PassingNotes(frames));
     const int rank = static_cast<int>(
         std::find_if(matches.begin(), matches.end(), [&](const RaagMatch& m) { return m.raag == raag; }) -
         matches.begin()) + 1;

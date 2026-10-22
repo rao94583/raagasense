@@ -1,5 +1,5 @@
 // What the app knows about each raag: its svaras, which of them it uses only
-// sparingly, and its vadi and samvadi. The list covers the raags of the
+// sparingly, its vadi and samvadi, and which it leaves out going up or down. The list covers the raags of the
 // NCPA's AUTRIM project (autrimncpa.wordpress.com), whose notes on each raag
 // were checked for the svaras, and a few more; characteristic phrases come
 // later.
@@ -27,6 +27,11 @@ struct Raag {
   int samvadi = -1;
   // Other names and spellings it goes by.
   std::vector<std::string> aliases;
+  // The svaras it passes through going up, and going down, where it leaves
+  // some out (Bhimpalasi skips Re and Dha going up); empty where it uses all
+  // its svaras, or where that isn't recorded.
+  std::vector<int> ascent;
+  std::vector<int> descent;
 };
 
 // Every raag the app knows, in alphabetical order.

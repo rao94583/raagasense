@@ -26,6 +26,8 @@ TEST(Raags, WellFormed) {
     };
     for (int svara : raag.occasional) EXPECT_TRUE(uses(svara)) << raag.name << ": occasional svara it doesn't use";
     if (raag.vadi >= 0) EXPECT_TRUE(uses(raag.vadi)) << raag.name << ": vadi";
+    for (int svara : raag.ascent) EXPECT_TRUE(uses(svara)) << raag.name << ": ascent";
+    for (int svara : raag.descent) EXPECT_TRUE(uses(svara)) << raag.name << ": descent";
     if (raag.samvadi >= 0) EXPECT_TRUE(uses(raag.samvadi)) << raag.name << ": samvadi";
   }
 }

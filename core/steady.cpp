@@ -18,6 +18,8 @@ constexpr double kOctaveCheckSeconds = 0.05;
 // steady notes; 400 is much worse, and no weighting at all fails.
 constexpr int kSlopeReach = 3;
 constexpr double kSteadySlope = 150;
+// The shortest passing note, in seconds: about three frames.
+constexpr double kPassingNoteSeconds = 0.03;
 // HeldPitches turns to SteadinessWeighted when the steady notes cover less
 // than this share of the voiced time. None of the labeled recordings comes
 // under it, so it's untried; it's for fast music.
@@ -134,6 +136,12 @@ std::vector<SteadyNote> SteadinessWeighted(std::span<const PitchFrame> frames, c
                      kReference * std::exp2(points[i].cents / 1200)});
   }
   return notes;
+}
+
+std::vector<SteadyNote> PassingNotes(std::span<const PitchFrame> frames, const SteadyOptions& options) {
+  SteadyOptions passing = options;
+  passing.min_duration = kPassingNoteSeconds;
+  return FindSteadyNotes(frames, passing);
 }
 
 std::vector<SteadyNote> HeldPitches(std::span<const PitchFrame> frames, const SteadyOptions& options) {

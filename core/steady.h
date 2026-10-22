@@ -49,6 +49,10 @@ std::vector<SteadyNote> FindSteadyNotes(std::span<const PitchFrame> frames, cons
 // the notes in fast music, such as taans or film songs.
 std::vector<SteadyNote> SteadinessWeighted(std::span<const PitchFrame> frames, const SteadyOptions& options = {});
 
+// Every steady stretch of 0.03 s or more: the notes the melody passes
+// through, too short to count as held but enough to follow its movement.
+std::vector<SteadyNote> PassingNotes(std::span<const PitchFrame> frames, const SteadyOptions& options = {});
+
 // The pitches to judge Sa and the raag by: the steady notes, or, when they
 // cover less than a fifth of the voiced time, SteadinessWeighted's.
 std::vector<SteadyNote> HeldPitches(std::span<const PitchFrame> frames, const SteadyOptions& options = {});

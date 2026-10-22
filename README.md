@@ -49,5 +49,6 @@ session, and the plot draws into any Core Graphics context).
 - [ ] Andolan, and meends as transitions between svaras
 - [x] Svaras of 91 raags (the NCPA AUTRIM list and a few more), and Sa from a known raag
 - [x] Naming the raag from held notes: svaras, occasional svaras, vadi
-- [ ] Phrases and movement between svaras, for raags with the same svaras
+- [x] Svaras left out going up or down (39 raags so far)
+- [ ] Characteristic phrases, for raags with the same svaras
 - [ ] iOS app
