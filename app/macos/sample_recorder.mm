@@ -89,6 +89,18 @@ NSString* CsvField(NSString* text) {
   return [NSString stringWithFormat:@"\"%@\"", [text stringByReplacingOccurrencesOfString:@"\"" withString:@"\"\""]];
 }
 
+// labels.csv's text with the last column, sa_checked, of the file's row set.
+NSString* WithChecked(NSString* labels, NSString* file, BOOL checked) {
+  NSMutableArray<NSString*>* lines = [[labels componentsSeparatedByString:@"\n"] mutableCopy];
+  NSString* prefix = [CsvField(file) stringByAppendingString:@","];
+  for (NSUInteger i = 0; i < lines.count; ++i) {
+    if (![lines[i] hasPrefix:prefix]) continue;
+    const NSRange comma = [lines[i] rangeOfString:@"," options:NSBackwardsSearch];
+    lines[i] = [[lines[i] substringToIndex:comma.location + 1] stringByAppendingString:checked ? @"yes" : @"no"];
+  }
+  return [lines componentsJoinedByString:@"\n"];
+}
+
 NSString* MinutesAndSeconds(double seconds) {
   return [NSString stringWithFormat:@"%d:%02d", static_cast<int>(seconds) / 60, static_cast<int>(seconds) % 60];
 }
@@ -109,6 +121,9 @@ NSString* MinutesAndSeconds(double seconds) {
   NSTextField* _folderLabel;
   NSTextField* _statusLabel;
   NSProgressIndicator* _progress;
+  // Ticked once Sa has been checked by ear: while recording, for the Sa
+  // shown, and after saving, for the recording saved.
+  NSButton* _checkedBox;
   NSButton* _startButton;
   NSButton* _stopButton;
   NSButton* _discardButton;
@@ -122,6 +137,11 @@ NSString* MinutesAndSeconds(double seconds) {
   std::unique_ptr<raagasense::SaFinder> _finder;
   NSTimer* _timer;
   NSString* _partialPath;
+  // The Sa that was showing when it was ticked as checked, in Hz.
+  double _checkedSa;
+  // The last recording saved with a Sa, whose row in labels.csv the checkbox
+  // still changes.
+  NSString* _savedName;
   // Stream times: when recording began, and the latest frame given to the
   // finder.
   double _startTime;
@@ -196,6 +216,9 @@ NSString* MinutesAndSeconds(double seconds) {
   _statusLabel = [NSTextField wrappingLabelWithString:
                                   @"Choose the raag, start the music, then press Start. Recording stops by itself "
                                   @"once Sa is clear."];
+  _checkedBox = [NSButton checkboxWithTitle:@"I've checked this Sa by ear" target:self action:@selector(checkedChanged:)];
+  _checkedBox.hidden = YES;
+
   _progress = [[NSProgressIndicator alloc] init];
   _progress.indeterminate = NO;
   _progress.minValue = 0;
@@ -209,7 +232,7 @@ NSString* MinutesAndSeconds(double seconds) {
                                                              _startButton ]];
   [self setRecording:NO];
 
-  NSStackView* content = [NSStackView stackViewWithViews:@[ form, _statusLabel, _progress, buttons ]];
+  NSStackView* content = [NSStackView stackViewWithViews:@[ form, _statusLabel, _checkedBox, _progress, buttons ]];
   content.orientation = NSUserInterfaceLayoutOrientationVertical;
   content.alignment = NSLayoutAttributeLeading;
   content.spacing = 14;
@@ -398,6 +421,25 @@ NSString* MinutesAndSeconds(double seconds) {
   }];
 }
 
+- (void)checkedChanged:(NSButton*)sender {
+  if (_timer) {
+    _checkedSa = _finder ? _finder->status().sa : 0;
+  } else if (_savedName) {
+    [self setChecked:sender.state == NSControlStateValueOn forFile:_savedName];
+  }
+}
+
+// Sets the sa_checked column of this file's row in labels.csv.
+- (void)setChecked:(BOOL)checked forFile:(NSString*)name {
+  NSString* labels = [self.folder stringByAppendingPathComponent:@"labels.csv"];
+  NSString* text = [NSString stringWithContentsOfFile:labels encoding:NSUTF8StringEncoding error:nil];
+  if (!text) return;
+  NSError* error = nil;
+  if (![WithChecked(text, name, checked) writeToFile:labels atomically:YES encoding:NSUTF8StringEncoding error:&error]) {
+    [self showError:error.localizedDescription];
+  }
+}
+
 - (void)beginRecording {
   _raag = [self chosenRaag];
   raagasense::SaFinderOptions options;
@@ -412,6 +454,9 @@ NSString* MinutesAndSeconds(double seconds) {
   }
   _startTime = _lastTime = _livePitch->now();
   _progress.doubleValue = 0;
+  _checkedBox.state = NSControlStateValueOff;
+  _checkedBox.hidden = YES;
+  _savedName = nil;
   [self update];
   __weak RSSampleRecorder* weakSelf = self;
   _timer = [NSTimer scheduledTimerWithTimeInterval:kTick
@@ -467,7 +512,14 @@ NSString* MinutesAndSeconds(double seconds) {
       [NSString stringWithFormat:@"Recording %@ of %@. Held notes so far: %.0f s of the %.0f s needed.\n%@",
                                  MinutesAndSeconds(_lastTime - _startTime), @(_raag.name.c_str()), status.held_seconds,
                                  needed, sa];
-  if (status.sa > 0 && status.held_seconds >= kShowSaAfter) [_host showSa:status.sa];
+  if (status.sa > 0 && status.held_seconds >= kShowSaAfter) {
+    [_host showSa:status.sa];
+    _checkedBox.hidden = NO;
+    // A check was for the Sa then showing, not a different one.
+    if (_checkedBox.state == NSControlStateValueOn && Note(status.sa).first != Note(_checkedSa).first) {
+      _checkedBox.state = NSControlStateValueOff;
+    }
+  }
 }
 
 - (void)stopAndSave:(id)sender {
@@ -493,6 +545,7 @@ NSString* MinutesAndSeconds(double seconds) {
   if (!save) {
     [files removeItemAtPath:_partialPath error:nil];
     _statusLabel.stringValue = @"Discarded.";
+    _checkedBox.hidden = YES;
     return;
   }
 
@@ -533,8 +586,9 @@ NSString* MinutesAndSeconds(double seconds) {
   NSMutableString* row = [NSMutableString string];
   if (![files fileExistsAtPath:labels]) [row appendString:@"file,raag,sa_hz,singer,notes,sa_checked\n"];
   const double sa = status.held_seconds >= kShowSaAfter ? status.sa : 0;
-  [row appendFormat:@"%@,%@,%.1f,%@,%@,no\n", CsvField(name), CsvField(@(_raag.name.c_str())), sa,
-                    CsvField(performer), CsvField(notes)];
+  const BOOL checked = sa > 0 && _checkedBox.state == NSControlStateValueOn;
+  [row appendFormat:@"%@,%@,%.1f,%@,%@,%@\n", CsvField(name), CsvField(@(_raag.name.c_str())), sa,
+                    CsvField(performer), CsvField(notes), checked ? @"yes" : @"no"];
   NSFileHandle* handle = [NSFileHandle fileHandleForWritingAtPath:labels];
   if (handle) {
     [handle seekToEndOfFile];
@@ -544,10 +598,12 @@ NSString* MinutesAndSeconds(double seconds) {
     [row writeToFile:labels atomically:YES encoding:NSUTF8StringEncoding error:nil];
   }
 
+  _savedName = sa > 0 ? name : nil;
+  _checkedBox.hidden = sa <= 0;
   _statusLabel.stringValue = [NSString
       stringWithFormat:@"Saved %@ (%@).\n%@", name, MinutesAndSeconds(seconds),
-                       status.sa > 0 && status.held_seconds >= kShowSaAfter
-                           ? [NSString stringWithFormat:@"Sa %@, %@%@. Please check it by ear.", ShownNote(status.sa), sure,
+                       sa > 0
+                           ? [NSString stringWithFormat:@"Sa %@, %@%@.", ShownNote(status.sa), sure,
                                                         status.missing.empty()
                                                             ? @""
                                                             : [NSString stringWithFormat:@"; not heard: %@",
