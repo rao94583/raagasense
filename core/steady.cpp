@@ -12,6 +12,16 @@ constexpr double kReference = 440;
 // A frame's pitch is checked against the median of the frames this many
 // seconds either side of it.
 constexpr double kOctaveCheckSeconds = 0.05;
+// SteadinessWeighted measures a frame's slope over this many voiced frames
+// either side of it, and weights it by exp(-(slope / kSteadySlope)^2), in
+// cents a second. On the labeled recordings, 100 to 200 do about as well as
+// steady notes; 400 is much worse, and no weighting at all fails.
+constexpr int kSlopeReach = 3;
+constexpr double kSteadySlope = 150;
+// HeldPitches turns to SteadinessWeighted when the steady notes cover less
+// than this share of the voiced time. None of the labeled recordings comes
+// under it, so it's untried; it's for fast music.
+constexpr double kMinSteadyShare = 0.2;
 
 struct Point {
   double time;
@@ -89,15 +99,57 @@ void FindInRun(std::span<const Point> run, const SteadyOptions& options, std::ve
   }
 }
 
-}  // namespace
-
-std::vector<SteadyNote> FindSteadyNotes(std::span<const PitchFrame> frames, const SteadyOptions& options) {
+// The voiced frames as points, with octave errors fixed.
+std::vector<Point> VoicedPoints(std::span<const PitchFrame> frames, const SteadyOptions& options) {
   std::vector<Point> points;
   for (const PitchFrame& frame : frames) {
     if (!frame.voiced || frame.confidence < options.min_confidence || frame.frequency <= 0) continue;
     points.push_back({frame.time, 1200 * std::log2(frame.frequency / kReference)});
   }
   FixOctaveErrors(&points);
+  return points;
+}
+
+}  // namespace
+
+std::vector<SteadyNote> SteadinessWeighted(std::span<const PitchFrame> frames, const SteadyOptions& options) {
+  const std::vector<Point> points = VoicedPoints(frames, options);
+  std::vector<SteadyNote> notes;
+  for (size_t i = 0; i < points.size(); ++i) {
+    // The neighbors to measure the slope by, within this run of voiced frames.
+    size_t first = i, last = i;
+    while (first > 0 && i - first < kSlopeReach && points[first].time - points[first - 1].time <= options.max_gap) {
+      --first;
+    }
+    while (last + 1 < points.size() && last - i < kSlopeReach &&
+           points[last + 1].time - points[last].time <= options.max_gap) {
+      ++last;
+    }
+    if (first == last) continue;
+    const double slope = (points[last].cents - points[first].cents) / (points[last].time - points[first].time);
+    // The frame's share of the time: the mean spacing of its neighbors.
+    const double spacing = (points[last].time - points[first].time) / (last - first);
+    const double steadiness = std::exp(-(slope / kSteadySlope) * (slope / kSteadySlope));
+    notes.push_back({points[i].time, points[i].time + spacing * steadiness,
+                     kReference * std::exp2(points[i].cents / 1200)});
+  }
+  return notes;
+}
+
+std::vector<SteadyNote> HeldPitches(std::span<const PitchFrame> frames, const SteadyOptions& options) {
+  std::vector<SteadyNote> notes = FindSteadyNotes(frames, options);
+  double held = 0, voiced = 0;
+  for (const SteadyNote& note : notes) held += note.end - note.start;
+  const std::vector<Point> points = VoicedPoints(frames, options);
+  for (size_t i = 1; i < points.size(); ++i) {
+    if (points[i].time - points[i - 1].time <= options.max_gap) voiced += points[i].time - points[i - 1].time;
+  }
+  if (held >= kMinSteadyShare * voiced) return notes;
+  return SteadinessWeighted(frames, options);
+}
+
+std::vector<SteadyNote> FindSteadyNotes(std::span<const PitchFrame> frames, const SteadyOptions& options) {
+  const std::vector<Point> points = VoicedPoints(frames, options);
 
   std::vector<SteadyNote> found;
   size_t start = 0;

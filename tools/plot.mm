@@ -66,7 +66,7 @@ int main(int argc, char** argv) {
   tracker.Push(audio->samples, &frames);
   tracker.Finish(&frames);
   if (sa == 0) {
-    const std::vector<TonicCandidate> candidates = EstimateTonic(FindSteadyNotes(frames));
+    const std::vector<TonicCandidate> candidates = EstimateTonic(HeldPitches(frames));
     if (candidates.empty()) {
       std::fprintf(stderr, "%s: no steady notes to find Sa from; give it with --sa\n", paths[0].c_str());
       return 1;

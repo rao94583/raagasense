@@ -22,8 +22,10 @@ struct SaFinderOptions {
   double min_held_seconds = 45;
   // How long the best Sa must have stayed the best, in seconds of the
   // stream, with a lead in MatchRaag's score of at least min_margin...
+  // Since steady notes may be as short as 0.08 s, a lead of 0.1 let it be
+  // sure of a Sa's Ma once; 0.15 is sure of 23 of the 33, all right.
   double stable_seconds = 20;
-  double min_margin = 0.1;
+  double min_margin = 0.15;
   // ...or with any lead.
   double long_stable_seconds = 90;
   // A svara counts as heard once it has this share of the held time.

@@ -104,8 +104,9 @@ int main(int argc, char** argv) {
   SteadyOptions steady_options;
   steady_options.min_confidence = kMinConfidence;
   const std::vector<SteadyNote> notes = FindSteadyNotes(frames, steady_options);
+  const std::vector<SteadyNote> held = HeldPitches(frames, steady_options);
   const std::vector<TonicCandidate> candidates =
-      svaras.empty() ? EstimateTonic(notes) : EstimateTonicForSvaras(notes, svaras);
+      svaras.empty() ? EstimateTonic(held) : EstimateTonicForSvaras(held, svaras);
   if (tonic) {
     std::printf("frequency,score\n");
     for (const TonicCandidate& candidate : candidates) {

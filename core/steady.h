@@ -18,7 +18,7 @@ struct SteadyOptions {
   // A note's pitch stays within a band this many cents wide...
   double max_range_cents = 60;
   // ...lasts at least this many seconds...
-  double min_duration = 0.12;
+  double min_duration = 0.08;
   // ...and its pitch's trend (the slope of a straight-line fit) is at most
   // this many cents a second, which rules out slow glides that stay within
   // the band for a while.
@@ -42,5 +42,15 @@ struct SteadyNote {
 
 // The steady notes in frames, which must be in time order, earliest first.
 std::vector<SteadyNote> FindSteadyNotes(std::span<const PitchFrame> frames, const SteadyOptions& options = {});
+
+// Every voiced frame as a short note, lasting its share of the time times how
+// steady the pitch is around it: nearly all of it on a held pitch, little in
+// a glide. Unlike FindSteadyNotes it has no minimum length, so it still finds
+// the notes in fast music, such as taans or film songs.
+std::vector<SteadyNote> SteadinessWeighted(std::span<const PitchFrame> frames, const SteadyOptions& options = {});
+
+// The pitches to judge Sa and the raag by: the steady notes, or, when they
+// cover less than a fifth of the voiced time, SteadinessWeighted's.
+std::vector<SteadyNote> HeldPitches(std::span<const PitchFrame> frames, const SteadyOptions& options = {});
 
 }  // namespace raagasense

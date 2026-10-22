@@ -135,7 +135,7 @@ TEST(FindSteadyNotes, OctaveLeapIsKept) {
 
 TEST(FindSteadyNotes, TooShortIsNotANote) {
   std::vector<PitchFrame> frames;
-  Hold(&frames, 0.1, 500);
+  Hold(&frames, 0.06, 500);
   EXPECT_TRUE(FindSteadyNotes(frames).empty());
 }
 
@@ -144,6 +144,50 @@ TEST(FindSteadyNotes, IgnoresLowConfidenceFrames) {
   Hold(&frames, 0.5, 900);
   for (PitchFrame& frame : frames) frame.confidence = 0.3;
   EXPECT_TRUE(FindSteadyNotes(frames).empty());
+}
+
+double Total(const std::vector<SteadyNote>& notes) {
+  double total = 0;
+  for (const SteadyNote& note : notes) total += note.end - note.start;
+  return total;
+}
+
+// A held note counts for nearly all its time, a meend for almost none.
+TEST(SteadinessWeighted, HeldCountsAndGlidesDont) {
+  std::vector<PitchFrame> held, glide;
+  Hold(&held, 1.0, 700);
+  Glide(&glide, 0.4, 0, 700);
+  EXPECT_NEAR(Total(SteadinessWeighted(held)), 1.0, 0.03);
+  EXPECT_LT(Total(SteadinessWeighted(glide)), 0.01);
+}
+
+// Notes shorter than any steady note, as in a fast taan.
+TEST(HeldPitches, FallsBackForFastMusic) {
+  std::vector<PitchFrame> frames;
+  for (int i = 0; i < 20; ++i) {
+    Hold(&frames, 0.06, 0);
+    Hold(&frames, 0.06, 200);
+    Hold(&frames, 0.06, 400);
+  }
+  ASSERT_TRUE(FindSteadyNotes(frames).empty());
+  const std::vector<SteadyNote> pitches = HeldPitches(frames);
+  ASSERT_FALSE(pitches.empty());
+  double on_svaras = 0;
+  for (const SteadyNote& note : pitches) {
+    const double cents = Cents(note);
+    if (std::abs(cents) < 20 || std::abs(cents - 200) < 20 || std::abs(cents - 400) < 20) {
+      on_svaras += note.end - note.start;
+    }
+  }
+  EXPECT_GT(on_svaras / Total(pitches), 0.9);
+}
+
+TEST(HeldPitches, SteadyNotesWhenThereAreEnough) {
+  std::vector<PitchFrame> frames;
+  Hold(&frames, 0.5, 0);
+  Glide(&frames, 0.3, 0, 700);
+  Hold(&frames, 0.5, 700);
+  EXPECT_EQ(HeldPitches(frames).size(), FindSteadyNotes(frames).size());
 }
 
 }  // namespace

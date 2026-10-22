@@ -217,7 +217,7 @@ int main(int argc, char** argv) {
     std::vector<PitchFrame> frames;
     tracker.Push(audio->samples, &frames);
     tracker.Finish(&frames);
-    const std::vector<SteadyNote> notes = FindSteadyNotes(frames);
+    const std::vector<SteadyNote> notes = HeldPitches(frames);
     double held = 0;
     for (const SteadyNote& note : notes) held += note.end - note.start;
     const std::vector<TonicCandidate> with_raag = EstimateTonicForSvaras(notes, raag->svaras);
