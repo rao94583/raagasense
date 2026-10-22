@@ -89,6 +89,35 @@ NSString* CsvField(NSString* text) {
   return [NSString stringWithFormat:@"\"%@\"", [text stringByReplacingOccurrencesOfString:@"\"" withString:@"\"\""]];
 }
 
+// The number for the next recording named base, among these file names: 1 if
+// there's none yet, and otherwise one more than both how many there are and
+// the highest number in their names. A file counts if what follows base is
+// only a number and a Sa ("_2", "_D_sharp", "_D_sharp_2", "_2_E").
+int NextNumber(NSArray<NSString*>* names, NSString* base) {
+  int count = 0, highest = 0;
+  NSCharacterSet* digits = NSCharacterSet.decimalDigitCharacterSet;
+  for (NSString* name in names) {
+    NSString* stem = name.stringByDeletingPathExtension;
+    if (![stem hasPrefix:base]) continue;
+    NSString* rest = [stem substringFromIndex:base.length];
+    if (rest.length > 0 && ![rest hasPrefix:@"_"]) continue;
+    bool ours = true;
+    int number = 0;
+    for (NSString* token in [rest componentsSeparatedByString:@"_"]) {
+      if (token.length == 0 || [token isEqualToString:@"sharp"]) continue;
+      if ([token rangeOfCharacterFromSet:digits.invertedSet].location == NSNotFound) {
+        number = token.intValue;
+      } else if (!(token.length == 1 && [token characterAtIndex:0] >= 'A' && [token characterAtIndex:0] <= 'G')) {
+        ours = false;
+      }
+    }
+    if (!ours) continue;
+    ++count;
+    highest = std::max(highest, number);
+  }
+  return count == 0 ? 1 : std::max(count, highest) + 1;
+}
+
 // labels.csv's text with the last column, sa_checked, of the file's row set.
 NSString* WithChecked(NSString* labels, NSString* file, BOOL checked) {
   NSMutableArray<NSString*>* lines = [[labels componentsSeparatedByString:@"\n"] mutableCopy];
@@ -552,8 +581,13 @@ NSString* MinutesAndSeconds(double seconds) {
   const raagasense::SaStatus status = _finder ? _finder->status() : raagasense::SaStatus{};
   NSString* performer = Slug(_performerBox.stringValue);
   NSString* artist = Slug(_artistField.stringValue);
-  NSMutableString* stem = [NSMutableString stringWithFormat:@"%@_%@", Slug(@(_raag.name.c_str())), performer];
-  if (artist.length > 0) [stem appendFormat:@"_%@", artist];
+  NSMutableString* base = [NSMutableString stringWithFormat:@"%@_%@", Slug(@(_raag.name.c_str())), performer];
+  if (artist.length > 0) [base appendFormat:@"_%@", artist];
+  // Recordings with the same raag, performer and artist, such as several film
+  // songs by one singer, are numbered from the second, before the Sa.
+  NSMutableString* stem = [base mutableCopy];
+  const int number = NextNumber([files contentsOfDirectoryAtPath:self.folder error:nil], base);
+  if (number > 1) [stem appendFormat:@"_%d", number];
   // Only a Sa it's sure of goes in the name.
   if (status.confident) [stem appendFormat:@"_%s", kFileNotes[Note(status.sa).first]];
   NSString* name = [stem stringByAppendingPathExtension:@"m4a"];
