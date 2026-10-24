@@ -28,6 +28,14 @@ struct SaFinderOptions {
   double min_margin = 0.15;
   // ...or with any lead.
   double long_stable_seconds = 90;
+  // Or, with a clear lead held for a while, fewer held notes: for music
+  // with few, such as film songs with long instrumental passages. On the
+  // 131 labeled recordings it was never sure of, the best Sa was right on all
+  // but a few, often for minutes, with under 45 s of held notes. With this,
+  // it's sure on 115 of the 131 (97 before) and right on 112 (95).
+  double quick_held_seconds = 25;
+  double quick_margin = 1;
+  double quick_stable_seconds = 30;
   // A svara counts as heard once it has this share of the held time.
   double heard_share = 0.01;
   // Whether being done also waits, once sure of Sa, for every svara the raag

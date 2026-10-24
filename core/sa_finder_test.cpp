@@ -33,6 +33,9 @@ std::vector<PitchFrame> Yaman(int phrases, bool dha = true) {
   return frames;
 }
 
+
+const Raag& kYaman = *FindRaag("Yaman");
+
 // The stream time when the finder is done, adding frames a second at a time;
 // 0 if never.
 double DoneAt(SaFinder& finder, const std::vector<PitchFrame>& frames) {
@@ -43,8 +46,6 @@ double DoneAt(SaFinder& finder, const std::vector<PitchFrame>& frames) {
   return 0;
 }
 
-const Raag& kYaman = *FindRaag("Yaman");
-
 TEST(SaFinder, NothingYet) {
   SaFinder finder(kYaman);
   EXPECT_EQ(finder.status().sa, 0);
@@ -53,20 +54,20 @@ TEST(SaFinder, NothingYet) {
 
 TEST(SaFinder, ConfidentOnceThereAreEnoughHeldNotes) {
   const std::vector<PitchFrame> frames = Yaman(12);
-  SaFinder finder(kYaman);
-  double confident_at = 0;
-  // In one-second chunks, as the app adds them.
-  for (size_t at = 0; at < frames.size(); at += 100) {
-    finder.Add(std::span(frames).subspan(at, std::min<size_t>(100, frames.size() - at)));
-    if (finder.status().confident && confident_at == 0) confident_at = frames[at].time;
-  }
+  // Without the quick route, and with it.
+  SaFinderOptions slow;
+  slow.quick_held_seconds = 1e9;
+  SaFinder slow_finder(kYaman, slow), finder(kYaman);
+  const double slow_at = DoneAt(slow_finder, frames), quick_at = DoneAt(finder, frames);
   const SaStatus& status = finder.status();
   EXPECT_TRUE(status.confident);
   EXPECT_NEAR(std::remainder(CentsFromSa(status.sa, kSa), 1200), 0, 5);
-  EXPECT_GT(status.margin, 0.1);
-  EXPECT_GE(status.held_seconds, 60);
-  // Not before 45 s of held notes, which takes about 60 s with the rests.
-  EXPECT_GT(confident_at, 55);
+  EXPECT_GT(status.margin, 1);
+  // Not before 45 s of held notes, which takes about 60 s with the rests...
+  EXPECT_GT(slow_at, 55);
+  // ...or, with this clear a lead, 25 s of them and 30 s of the same Sa.
+  EXPECT_GT(quick_at, 30);
+  EXPECT_LT(quick_at, slow_at);
 }
 
 TEST(SaFinder, NotConfidentWithTooFewHeldNotes) {

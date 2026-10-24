@@ -27,9 +27,13 @@ void SaFinder::Add(std::span<const PitchFrame> frames) {
   const bool same = status_.sa > 0 && status.sa > 0 && std::abs(std::remainder(CentsFromSa(status.sa, status_.sa), 1200)) < 50;
   if (!same) best_since_ = now;
   status.stable_seconds = status.sa > 0 ? now - best_since_ : 0;
-  status.confident = status.sa > 0 && status.held_seconds >= options_.min_held_seconds &&
-                     ((status.margin >= options_.min_margin && status.stable_seconds >= options_.stable_seconds) ||
-                      (status.margin > 0 && status.stable_seconds >= options_.long_stable_seconds));
+  status.confident =
+      status.sa > 0 &&
+      ((status.held_seconds >= options_.min_held_seconds &&
+        ((status.margin >= options_.min_margin && status.stable_seconds >= options_.stable_seconds) ||
+         (status.margin > 0 && status.stable_seconds >= options_.long_stable_seconds))) ||
+       (status.held_seconds >= options_.quick_held_seconds && status.margin >= options_.quick_margin &&
+        status.stable_seconds >= options_.quick_stable_seconds));
   if (status.confident && !status_.confident) confident_since_ = now;
 
   if (status.sa > 0) {
