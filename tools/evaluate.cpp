@@ -14,12 +14,14 @@
 // estimated without knowing the raag; how much of the recording is held
 // notes; and the app's guess at the raag, with where the true raag ranks among
 // its guesses. A small gap between the two fits means the Sa is uncertain.
-// The guesses use raag profiles learned from the other recordings with a
-// known Sa, leaving out those by the same artist ("artist ..." in the
+// The guesses use what's learned (raag profiles, and how often each raag's
+// phrases turn up by chance) from the other recordings with a known Sa,
+// leaving out those by the same artist ("artist ..." in the
 // labels' notes; otherwise each file counts as its own artist).
 #include <unistd.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -209,6 +211,9 @@ int main(int argc, char** argv) {
     double labeled_sa, held_share;
     std::vector<SteadyNote> notes, passing;
     std::vector<TonicCandidate> with_raag, alone;
+    // From the labeled Sa, if known, for learning from.
+    std::array<double, 12> held;
+    std::map<const Raag*, double> phrase_shares;
   };
   std::vector<Analysis> analyses;
   for (const std::filesystem::path& file : files) {
@@ -234,12 +239,16 @@ int main(int argc, char** argv) {
     tracker.Push(audio->samples, &frames);
     tracker.Finish(&frames);
     Analysis analysis{name, label != labels.end() && !label->second.artist.empty() ? label->second.artist : file.string(),
-                      raag, labeled_sa, 0, HeldPitches(frames), PassingNotes(frames), {}, {}};
+                      raag, labeled_sa, 0, HeldPitches(frames), PassingNotes(frames), {}, {}, {}, {}};
     double held = 0;
     for (const SteadyNote& note : analysis.notes) held += note.end - note.start;
     analysis.held_share = held / (audio->samples.size() / audio->sample_rate);
     analysis.with_raag = EstimateTonicForSvaras(analysis.notes, raag->svaras);
     analysis.alone = EstimateTonic(analysis.notes);
+    if (labeled_sa > 0) {
+      analysis.held = HeldShares(analysis.notes, labeled_sa);
+      analysis.phrase_shares = PhraseShares(analysis.passing, labeled_sa);
+    }
     if (analysis.with_raag.empty()) {
       std::printf("%-40s %-26s no held notes\n", name.c_str(), raag->name.c_str());
       continue;
@@ -267,14 +276,14 @@ int main(int argc, char** argv) {
       mark_alone = alone_ok ? " " : "x";
     }
 
-    // Profiles learned from the other artists' recordings with a known Sa,
-    // so that no recording helps name itself or its artist's others.
-    RaagProfiles profiles;
+    // Learned from the other artists' recordings with a known Sa, so that no
+    // recording helps name itself or its artist's others.
+    RaagLearning learning;
     for (const Analysis& other : analyses) {
       if (other.artist == analysis.artist || other.labeled_sa <= 0) continue;
-      AddToProfile(HeldShares(other.notes, other.labeled_sa), &profiles[other.raag]);
+      Learn(*other.raag, other.held, other.phrase_shares, &learning);
     }
-    const std::vector<RaagMatch> matches = IdentifyRaag(analysis.notes, analysis.passing, &profiles);
+    const std::vector<RaagMatch> matches = IdentifyRaag(analysis.notes, analysis.passing, &learning);
     const int rank = static_cast<int>(
         std::find_if(matches.begin(), matches.end(), [&](const RaagMatch& m) { return m.raag == raag; }) -
         matches.begin()) + 1;

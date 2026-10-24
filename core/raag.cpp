@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 
+#include "core/raag_phrases.h"
 #include "core/svara.h"
 
 namespace raagasense {
@@ -79,11 +80,38 @@ std::string Normalize(std::string_view name) {
   return normalized;
 }
 
+// The svaras of a phrase as written in RaagPhrases, repeats collapsed and
+// octave marks dropped.
+std::vector<int> PhraseSvaras(std::string_view phrase) {
+  std::vector<int> svaras;
+  for (char c : phrase) {
+    const int svara = c == ' ' || c == '.' || c == '\'' ? -1 : SvaraFromLetter(std::string_view(&c, 1));
+    if (svara >= 0 && (svaras.empty() || svaras.back() != svara)) svaras.push_back(svara);
+  }
+  return svaras;
+}
+
+// The raags with their phrases from RaagPhrases, found by name or alias.
+std::vector<Raag> WithPhrases(std::vector<Raag> raags) {
+  for (const auto& [name, phrases] : RaagPhrases()) {
+    for (Raag& raag : raags) {
+      bool named = Normalize(raag.name) == Normalize(name);
+      for (const std::string& alias : raag.aliases) named = named || Normalize(alias) == Normalize(name);
+      if (!named) continue;
+      for (const std::string& phrase : phrases) {
+        std::vector<int> svaras = PhraseSvaras(phrase);
+        if (svaras.size() >= 3) raag.phrases.push_back(std::move(svaras));
+      }
+    }
+  }
+  return raags;
+}
+
 const std::vector<Raag>& AllRaags() {
-  static const std::vector<Raag> raags = {
+  static const std::vector<Raag> raags = WithPhrases({
       Make("Abhogi", "S R g m D", "", "m", "S", {"Abhogi Kanada"}),
       Make("Adana", "S R g m P d n", "", "S", "P", {}, "S R m P d n", ""),
-      Make("Ahir Bhairav", "S r G m P D n", "", "m", "S"),
+      Make("Ahir Bhairav", "S r G m P D n", "", "m", "S", {"Aheer Bhairav"}),
       Make("Asavari", "S R g m P d n", "", "d", "g", {}, "S R m P d", ""),
       Make("Asavari (komal Re)", "S r g m P d n", "", "d", "g", {"Komal Rishabh Asavari"}, "S r m P d", ""),
       Make("Bageshree", "S R g m P D n", "P", "m", "S", {"Bageshri"}, "S g m D n", ""),
@@ -96,7 +124,7 @@ const std::vector<Raag>& AllRaags() {
       Make("Bhairav", "S r G m P d N", "", "d", "r"),
       Make("Bhairavi", "S r g m P d n", "", "m", "S"),
       Make("Bhatiyar", "S r G m M P D N", "M", "m", "S"),
-      Make("Bhimpalasi", "S R g m P D n", "", "m", "S", {"Bhimpalas"}, "S g m P n", ""),
+      Make("Bhimpalasi", "S R g m P D n", "", "m", "S", {"Bhimpalas", "Bheempalasi"}, "S g m P n", ""),
       Make("Bhoopali", "S R G P D", "", "G", "D", {"Bhupali", "Bhoop", "Bhup"}),
       Make("Bhupal Todi", "S r g P d", "", "", ""),
       // The Marwa-thaat form; Bhairav-thaat Bibhas has komal Dha.
@@ -104,13 +132,14 @@ const std::vector<Raag>& AllRaags() {
       Make("Bihag", "S R G m M P D N", "M", "G", "N", {}, "S G m P N", ""),
       Make("Bihagda", "S R G m P D N", "", "", "", {}, "S G m P N", ""),
       Make("Bilaskhani Todi", "S r g m P d n", "", "d", "g", {}, "S r g P d", ""),
-      Make("Bilawal", "S R G m P D n N", "n", "D", "G", {"Alhaiya Bilawal", "Alhaiya Bilaval", "Bilaval"}, "S R G P D N", ""),
+      Make("Bilawal", "S R G m P D n N", "n", "D", "G", {"Alhaiya Bilawal", "Alhaiya Bilaval", "Bilaval"},
+           "S R G P D N", ""),
       Make("Brindavani Sarang", "S R m P n N", "", "R", "P", {"Vrindavani Sarang"}, "S R m P N", "S R m P n"),
       Make("Chandrakauns", "S g m d N", "", "", ""),
       Make("Charukesi", "S R G m P d n", "", "m", "S", {"Charukeshi"}),
-      Make("Chhayanat", "S R G m M P D n N", "M n", "R", "P"),
+      Make("Chhayanat", "S R G m M P D n N", "M n", "R", "P", {"Chhayanut"}),
       Make("Darbari Kanada", "S R g m P d n", "", "R", "P", {"Darbari"}),
-      Make("Desh", "S R G m P D n N", "", "R", "P", {}, "S R m P N", "S R G m P D n"),
+      Make("Desh", "S R G m P D n N", "", "R", "P", {"Des"}, "S R m P N", "S R G m P D n"),
       Make("Deshi", "S R g m P d D n", "d", "P", "R"),
       Make("Deshkar", "S R G P D", "", "D", "G"),
       Make("Dev Gandhar", "S R g G m P d n", "", "d", "g", {"Devgandhar"}),
@@ -128,7 +157,7 @@ const std::vector<Raag>& AllRaags() {
       Make("Gunakri", "S r m P d", "", "d", "r", {"Gunkali"}),
       Make("Gurjari Todi", "S r g M d N", "", "d", "g", {"Gujari Todi"}),
       Make("Hamir", "S R G m M P D N", "", "D", "G", {"Hameer"}),
-      Make("Hansadhwani", "S R G P N", "", "R", "P", {"Hansadhvani", "Hamsadhwani"}),
+      Make("Hansadhwani", "S R G P N", "", "R", "P", {"Hansadhvani", "Hamsadhwani", "Hansdhwani"}),
       Make("Hemant", "S R G m P D N", "", "m", "S", {}, "S G m D N", ""),
       Make("Hindol", "S G M D N", "N", "D", "G", {}, "S G M D", ""),
       Make("Jaijaivanti", "S R g G m P D n N", "g n", "R", "P", {"Jaijaiwanti", "Jaijawanti"}),
@@ -143,7 +172,7 @@ const std::vector<Raag>& AllRaags() {
       Make("Jogkauns", "S g G m P d n N", "n", "m", "S"),
       Make("Kafi", "S R g m P D n", "", "P", "S"),
       Make("Kalashri", "S R G m P D n", "", "", "", {}, "S G m P D n", ""),
-      Make("Kalavati", "S G P D n", "", "P", "S"),
+      Make("Kalavati", "S G P D n", "", "P", "S", {"Kalawati"}),
       Make("Kalingda", "S r G m P d N", "", "P", "S", {"Kalingada"}),
       Make("Kamod", "S R G m M P D N", "M", "P", "R"),
       Make("Kaunsi Kanada", "S R g m P d n", "", "m", "S", {"Kausi Kanada", "Kaushi Kanada"}, "S g m d n", ""),
@@ -157,7 +186,7 @@ const std::vector<Raag>& AllRaags() {
       Make("Lalita Gauri", "S r G m M P d N", "m", "", ""),
       Make("Lalita Sohini", "S r G m M D N", "m", "", ""),
       Make("Lanka Dahan Sarang", "S R g m P D n N", "", "S", "m", {}, "S R m P N", ""),
-      Make("Madhmad Sarang", "S R m P n", "", "R", "P", {"Madhyamad Sarang"}),
+      Make("Madhmad Sarang", "S R m P n", "", "R", "P", {"Madhyamad Sarang", "Madhumad Sarang"}),
       Make("Madhukauns", "S g M P n", "", "P", "S"),
       Make("Madhuvanti", "S R g M P D N", "", "P", "S", {}, "S g M P N", ""),
       Make("Malgunji", "S R g G m P D n N", "", "m", "S", {}, "S R G m D n", ""),
@@ -171,7 +200,7 @@ const std::vector<Raag>& AllRaags() {
       Make("Multani", "S r g M P d N", "r d", "P", "S", {}, "S g M P N", ""),
       Make("Nand", "S R G m M P D N", "M", "S", "P", {"Anandi", "Nand Kalyan"}),
       Make("Narayani", "S R m P D n", "", "S", "P"),
-      Make("Nat Bhairav", "S R G m P d N", "", "m", "S"),
+      Make("Nat Bhairav", "S R G m P d N", "", "m", "S", {"Nut Bhairav"}),
       Make("Nayaki Kanada", "S R g m P n", "", "m", "S"),
       Make("Pahadi", "S R G m P D n N", "m n N", "", "", {"Pahari"}),
       Make("Paraj", "S r G m M P d N", "m", "S", "P", {}, "S G M d N", ""),
@@ -181,7 +210,7 @@ const std::vector<Raag>& AllRaags() {
       Make("Puriya", "S r G M D N", "", "G", "N"),
       Make("Puriya Dhanashree", "S r G M P d N", "", "P", "r", {"Puriya Dhanashri"}),
       Make("Puriya Kalyan", "S r G M P D N", "", "S", "P"),
-      Make("Purvi", "S r G m M P d N", "m", "G", "N", {}, "S r G m M d N", ""),
+      Make("Purvi", "S r G m M P d N", "m", "G", "N", {"Poorvi"}, "S r G m M d N", ""),
       Make("Rageshree", "S R G m D n", "R", "", "", {"Rageshri", "Rageshwari"}, "S G m D n", ""),
       Make("Ramdasi Malhar", "S R g G m P D n N", "", "m", "S"),
       Make("Ramkali", "S r G m M P d n N", "M n", "P", "S"),
@@ -191,11 +220,11 @@ const std::vector<Raag>& AllRaags() {
       Make("Shivmat Bhairav", "S r g G m P d n N", "g n", "", "", {"Shiv Bhairav"}),
       Make("Shivranjani", "S R g P D", "", "", "", {"Shivaranjani"}),
       Make("Shri", "S r G M P d N", "", "r", "P", {"Shree"}, "S r M P N", ""),
-      Make("Shuddh Kalyan", "S R G M P D N", "M N", "G", "D", {}, "S R G P D", ""),
-      Make("Shuddh Sarang", "S R m M P D N", "", "R", "P", {}, "S R M P N", ""),
+      Make("Shuddh Kalyan", "S R G M P D N", "M N", "G", "D", {"Shuddha Kalyan"}, "S R G P D", ""),
+      Make("Shuddh Sarang", "S R m M P D N", "", "R", "P", {"Shuddha Sarang"}, "S R M P N", ""),
       Make("Shyam Kalyan", "S R G m M P D N", "m", "", "", {}, "S R m M P N", ""),
       Make("Sindhura", "S R g m P D n", "", "S", "P", {"Sindhoora"}, "S R m P D", ""),
-      Make("Sohini", "S r G M D N", "", "D", "G", {"Sohni"}),
+      Make("Sohini", "S r G M D N", "", "D", "G", {"Sohni", "Sohani"}),
       Make("Sughrai", "S R g m P n", "", "", ""),
       Make("Suha", "S R g m P n", "", "", ""),
       Make("Sur Malhar", "S R m P D n N", "", "P", "S", {"Surdasi Malhar"}, "S R m P n N", ""),
@@ -205,9 +234,10 @@ const std::vector<Raag>& AllRaags() {
       Make("Yaman", "S R G M P D N", "", "G", "N", {"Kalyan", "Iman"}),
       Make("Yaman Kalyan", "S R G m M P D N", "m", "G", "N"),
       Make("Yamani Bilawal", "S R G m M P D N", "", "S", "P"),
-  };
+  });
   return raags;
 }
+
 
 }  // namespace
 

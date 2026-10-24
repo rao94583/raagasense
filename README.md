@@ -50,5 +50,8 @@ session, and the plot draws into any Core Graphics context).
 - [x] Svaras of 122 raags (the NCPA AUTRIM list, common raags from tanarang.com, and more; 28 marked rare), and Sa from a known raag
 - [x] Naming the raag from held notes: svaras, occasional svaras, vadi
 - [x] Svaras left out going up or down (39 raags so far)
-- [ ] Characteristic phrases, for raags with the same svaras
+- [x] Characteristic phrases (tanarang.com's, for 105 raags), scored above chance
+- [x] Raag profiles learned from labeled recordings
+- [ ] Learned movement between svaras, without favoring raags that have recordings
+- [ ] Raag guesses in the app
 - [ ] iOS app

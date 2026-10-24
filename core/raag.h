@@ -35,6 +35,9 @@ struct Raag {
   std::vector<int> descent;
   // Seldom performed, so less likely to be what's playing.
   bool rare = false;
+  // Characteristic phrases (RaagPhrases) as svaras, repeats collapsed and
+  // octaves left out; only those of three svaras or more.
+  std::vector<std::vector<int>> phrases;
 };
 
 // Every raag the app knows, in alphabetical order.

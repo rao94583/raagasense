@@ -1,6 +1,8 @@
 #include "core/identify.h"
 
 #include <algorithm>
+#include <initializer_list>
+#include <map>
 #include <cmath>
 #include <string>
 #include <vector>
@@ -72,12 +74,48 @@ TEST(IdentifyRaag, ProfilesDecideBetweenRaagsWithTheSameSvaras) {
   const Raag* other = FindRaag(matches[0].raag->name == "Marwa" ? "Puriya" : "Marwa");
   ASSERT_EQ(other->svaras, matches[0].raag->svaras);
 
-  RaagProfiles profiles;
-  for (int i = 0; i < 3; ++i) AddToProfile(HeldShares(notes, kSa), &profiles[other]);
-  EXPECT_EQ(profiles[other].recordings, 3);
-  EXPECT_NEAR(profiles[other].held[kKomalRe], 1.0 / 6, 1e-9);
-  matches = IdentifyRaag(notes, {}, &profiles);
+  RaagLearning learning;
+  for (int i = 0; i < 3; ++i) AddToProfile(HeldShares(notes, kSa), &learning.profiles[other]);
+  EXPECT_EQ(learning.profiles[other].recordings, 3);
+  EXPECT_NEAR(learning.profiles[other].held[kKomalRe], 1.0 / 6, 1e-9);
+  matches = IdentifyRaag(notes, {}, &learning);
   EXPECT_EQ(matches[0].raag, other);
+}
+
+// Short passing notes, one after another, in cents from kSa.
+std::vector<SteadyNote> Passing(std::initializer_list<int> cents) {
+  std::vector<SteadyNote> notes;
+  for (int c : cents) Hold(&notes, c, 0.05);
+  for (size_t i = 1; i < notes.size(); ++i) {
+    notes[i].start = notes[i - 1].end + 0.05;
+    notes[i].end = notes[i].start + 0.05;
+  }
+  return notes;
+}
+
+TEST(PhraseShares, FindsPhrasesInOrderWithGraceNotes) {
+  const Raag& yaman = *FindRaag("Yaman");
+  // Yaman's first phrase, N R G, with a grace note (S) between N and R, then
+  // the same svaras backwards.
+  const std::map<const Raag*, double> forward = PhraseShares(Passing({-100, 0, 200, 400}), kSa);
+  const std::map<const Raag*, double> backward = PhraseShares(Passing({400, 200, -100}), kSa);
+  const double one = 1.0 / yaman.phrases.size();
+  EXPECT_GE(forward.at(&yaman), one);
+  EXPECT_LT(backward.at(&yaman), forward.at(&yaman));
+}
+
+TEST(Learn, ProfilesAndChance) {
+  const Raag& yaman = *FindRaag("Yaman");
+  const Raag& bhoopali = *FindRaag("Bhoopali");
+  RaagLearning learning;
+  const std::map<const Raag*, double> shares = {{&yaman, 0.5}, {&bhoopali, 0.2}};
+  Learn(yaman, {}, shares, &learning);
+  Learn(yaman, {}, {{&yaman, 0.5}, {&bhoopali, 0.4}}, &learning);
+  EXPECT_EQ(learning.profiles[&yaman].recordings, 2);
+  // Chance is learned only from other raags' recordings.
+  EXPECT_EQ(learning.phrase_chance.count(&yaman), 0u);
+  EXPECT_EQ(learning.phrase_chance[&bhoopali].recordings, 2);
+  EXPECT_NEAR(learning.phrase_chance[&bhoopali].share, 0.3, 1e-9);
 }
 
 }  // namespace

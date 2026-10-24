@@ -4,6 +4,7 @@
 #include <set>
 #include <string>
 
+#include "core/raag_phrases.h"
 #include "core/svara.h"
 #include "gtest/gtest.h"
 
@@ -48,6 +49,15 @@ TEST(Raags, Find) {
   EXPECT_NE(FindRaag("Dhanashree (Bilawal thaat)"), FindRaag("Dhanashree"));
   EXPECT_EQ(FindRaag("Bhupali"), FindRaag("Bhoopali"));
   EXPECT_EQ(FindRaag("marva"), FindRaag("Marwa"));
+}
+
+TEST(Raags, Phrases) {
+  for (const auto& [name, phrases] : RaagPhrases()) EXPECT_NE(FindRaag(name), nullptr) << name;
+  // ".N R G ; .N R M G ; ..." from tanarang, octaves dropped.
+  const std::vector<std::vector<int>>& yaman = FindRaag("Yaman")->phrases;
+  ASSERT_FALSE(yaman.empty());
+  EXPECT_EQ(yaman[0], (std::vector<int>{kNi, kRe, kGa}));
+  EXPECT_FALSE(FindRaag("Abhogi")->phrases.empty());  // listed by its alias, Abhogi Kanada
 }
 
 TEST(Raags, Svaras) {
