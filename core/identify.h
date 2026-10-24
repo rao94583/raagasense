@@ -5,10 +5,14 @@
 // every other svara rare, and a penalty for each svara it can't do without
 // that's missing and for each svara it doesn't use that's there. Given the
 // passing notes too, it also weighs the svaras passed through going up and
-// going down against those the raag leaves out each way. Raags with the same
-// svaras are otherwise told apart only by their vadi.
+// going down against those the raag leaves out each way. Given profiles
+// learned from labeled recordings, it also weighs how the held time on a
+// raag's svaras compares with theirs. Raags with the same svaras are
+// otherwise told apart only by their vadi.
 #pragma once
 
+#include <array>
+#include <map>
 #include <span>
 #include <vector>
 
@@ -25,14 +29,30 @@ struct RaagMatch {
   double score = 0;
 };
 
+// What labeled recordings of a raag show: the mean share of their held time
+// on each svara, and how many recordings that's from.
+struct RaagProfile {
+  int recordings = 0;
+  std::array<double, 12> held = {};
+};
+using RaagProfiles = std::map<const Raag*, RaagProfile>;
+
+// The share of the held time in notes on each svara from this Sa.
+std::array<double, 12> HeldShares(std::span<const SteadyNote> notes, double sa);
+
+// Adds a recording's held shares (HeldShares from its Sa) to the raag's profile.
+void AddToProfile(const std::array<double, 12>& held, RaagProfile* profile);
+
 // Each known raag's best match, best first; empty without notes. notes are
-// the held pitches (HeldPitches), and passing the notes to follow the
-// melody's movement by (PassingNotes), if any.
-std::vector<RaagMatch> IdentifyRaag(std::span<const SteadyNote> notes, std::span<const SteadyNote> passing = {});
+// the held pitches (HeldPitches), passing the notes to follow the melody's
+// movement by (PassingNotes), and profiles what's been learned from labeled
+// recordings, if any.
+std::vector<RaagMatch> IdentifyRaag(std::span<const SteadyNote> notes, std::span<const SteadyNote> passing = {},
+                                    const RaagProfiles* profiles = nullptr);
 
 // The matches for a known raag from each candidate Sa, best first; empty
 // without notes.
 std::vector<RaagMatch> MatchRaag(std::span<const SteadyNote> notes, const Raag& raag,
-                                 std::span<const SteadyNote> passing = {});
+                                 std::span<const SteadyNote> passing = {}, const RaagProfiles* profiles = nullptr);
 
 }  // namespace raagasense

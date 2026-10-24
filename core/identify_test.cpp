@@ -57,5 +57,28 @@ TEST(IdentifyRaag, FewerSvarasFitBetterUnlessTheOthersAreHeld) {
   }
 }
 
+// Marwa, Puriya and Sohini share their svaras; a profile learned from
+// recordings of one decides between them.
+TEST(IdentifyRaag, ProfilesDecideBetweenRaagsWithTheSameSvaras) {
+  std::vector<SteadyNote> notes;
+  for (int i = 0; i < 3; ++i) {
+    for (auto [cents, seconds] : {std::pair{0, 0.6}, {100, 0.6}, {400, 0.6}, {600, 0.6}, {900, 0.6}, {1100, 0.6}}) {
+      Hold(&notes, cents, seconds);
+    }
+  }
+  std::vector<RaagMatch> matches = IdentifyRaag(notes);
+  ASSERT_FALSE(matches.empty());
+  // Whichever of the three the model alone doesn't pick.
+  const Raag* other = FindRaag(matches[0].raag->name == "Marwa" ? "Puriya" : "Marwa");
+  ASSERT_EQ(other->svaras, matches[0].raag->svaras);
+
+  RaagProfiles profiles;
+  for (int i = 0; i < 3; ++i) AddToProfile(HeldShares(notes, kSa), &profiles[other]);
+  EXPECT_EQ(profiles[other].recordings, 3);
+  EXPECT_NEAR(profiles[other].held[kKomalRe], 1.0 / 6, 1e-9);
+  matches = IdentifyRaag(notes, {}, &profiles);
+  EXPECT_EQ(matches[0].raag, other);
+}
+
 }  // namespace
 }  // namespace raagasense

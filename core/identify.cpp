@@ -36,6 +36,17 @@ constexpr double kDirectionWeight = 8;
 // penalties from 0.1 to 0.4 name 20 of the 59 labeled recordings first,
 // against 18 with none.
 constexpr double kRarePenalty = 0.2;
+// How a raag's profile learned from recordings counts. Its likelihood for
+// each svara is the profile's mean share and the model's, weighted by the
+// recordings and kProfilePrior; the held time then scores
+// kProfileWeight times how much likelier it is under that than under the
+// model alone. Leaving each recording's artist out, on 119 labeled
+// recordings, this names the raag first on 45 (35 without) and in the top 3
+// on 66 (63). It favors raags with recordings a little: the 34 whose raag no
+// other artist has recorded go from 15 first to 14. A weight of 2 does better
+// on recorded raags (34 against 20) but worse on the others (13).
+constexpr double kProfilePrior = 2;
+constexpr double kProfileWeight = 1;
 // Passing notes further apart than this, in seconds, aren't in one phrase.
 constexpr double kPhraseGap = 0.6;
 // A move between passing notes is up or down when it's at least this many
@@ -67,9 +78,9 @@ void Likelihoods(const Raag& raag, const double (&weight)[12], const std::vector
   }
 }
 
-// The score of the raag from a Sa with these shares, and this score from
-// EstimateTonic.
-double Score(const Raag& raag, const Shares& shares, double sa_and_pa) {
+// The score of the raag from a Sa with these shares, this score from
+// EstimateTonic, and the profile learned for it, if any.
+double Score(const Raag& raag, const Shares& shares, double sa_and_pa, const RaagProfile* profile) {
   double weight[12] = {};
   for (int svara : raag.svaras) {
     const bool occasional = std::find(raag.occasional.begin(), raag.occasional.end(), svara) != raag.occasional.end();
@@ -90,8 +101,19 @@ double Score(const Raag& raag, const Shares& shares, double sa_and_pa) {
     // moves are than with no direction.
     score += kDirectionWeight * (shares.up[svara] * std::log(up[svara] / likely[svara]) +
                                  shares.down[svara] * std::log(down[svara] / likely[svara]));
+    if (profile && profile->recordings > 0) {
+      const double learned = (profile->recordings * profile->held[svara] + kProfilePrior * likely[svara]) /
+                             (profile->recordings + kProfilePrior);
+      score += kProfileWeight * shares.held[svara] * std::log(learned / likely[svara]);
+    }
   }
   return score;
+}
+
+const RaagProfile* ProfileFor(const RaagProfiles* profiles, const Raag& raag) {
+  if (!profiles) return nullptr;
+  const auto found = profiles->find(&raag);
+  return found == profiles->end() ? nullptr : &found->second;
 }
 
 // Calls score(candidate, shares) for each candidate Sa.
@@ -126,11 +148,31 @@ bool Better(const RaagMatch& a, const RaagMatch& b) { return a.score > b.score; 
 
 }  // namespace
 
-std::vector<RaagMatch> IdentifyRaag(std::span<const SteadyNote> notes, std::span<const SteadyNote> passing) {
+std::array<double, 12> HeldShares(std::span<const SteadyNote> notes, double sa) {
+  std::array<double, 12> held = {};
+  double total = 0;
+  for (const SteadyNote& note : notes) total += note.end - note.start;
+  if (total <= 0) return held;
+  for (const SteadyNote& note : notes) {
+    held[NearestSvara(CentsFromSa(note.frequency, sa)).svara] += (note.end - note.start) / total;
+  }
+  return held;
+}
+
+void AddToProfile(const std::array<double, 12>& held, RaagProfile* profile) {
+  for (int svara = 0; svara < 12; ++svara) {
+    profile->held[svara] = (profile->held[svara] * profile->recordings + held[svara]) / (profile->recordings + 1);
+  }
+  ++profile->recordings;
+}
+
+std::vector<RaagMatch> IdentifyRaag(std::span<const SteadyNote> notes, std::span<const SteadyNote> passing,
+                                    const RaagProfiles* profiles) {
   std::vector<RaagMatch> best;
   ForEachSa(notes, passing, [&](const TonicCandidate& candidate, const Shares& shares) {
     for (const Raag& raag : Raags()) {
-      const RaagMatch match{&raag, candidate.frequency, Score(raag, shares, candidate.score)};
+      const RaagMatch match{&raag, candidate.frequency,
+                            Score(raag, shares, candidate.score, ProfileFor(profiles, raag))};
       auto known = std::find_if(best.begin(), best.end(), [&](const RaagMatch& m) { return m.raag == &raag; });
       if (known == best.end()) {
         best.push_back(match);
@@ -144,10 +186,11 @@ std::vector<RaagMatch> IdentifyRaag(std::span<const SteadyNote> notes, std::span
 }
 
 std::vector<RaagMatch> MatchRaag(std::span<const SteadyNote> notes, const Raag& raag,
-                                 std::span<const SteadyNote> passing) {
+                                 std::span<const SteadyNote> passing, const RaagProfiles* profiles) {
   std::vector<RaagMatch> matches;
   ForEachSa(notes, passing, [&](const TonicCandidate& candidate, const Shares& shares) {
-    matches.push_back({&raag, candidate.frequency, Score(raag, shares, candidate.score)});
+    matches.push_back({&raag, candidate.frequency,
+                       Score(raag, shares, candidate.score, ProfileFor(profiles, raag))});
   });
   std::sort(matches.begin(), matches.end(), Better);
   return matches;

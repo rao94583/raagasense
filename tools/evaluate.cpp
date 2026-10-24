@@ -14,6 +14,9 @@
 // estimated without knowing the raag; how much of the recording is held
 // notes; and the app's guess at the raag, with where the true raag ranks among
 // its guesses. A small gap between the two fits means the Sa is uncertain.
+// The guesses use raag profiles learned from the other recordings with a
+// known Sa, leaving out those by the same artist ("artist ..." in the
+// labels' notes; otherwise each file counts as its own artist).
 #include <unistd.h>
 
 #include <algorithm>
@@ -43,6 +46,8 @@ using namespace raagasense;
 struct Label {
   std::string raag;
   double sa = 0;  // Hz; 0 if unknown
+  // From "artist ..." in the notes; empty if not given.
+  std::string artist;
 };
 
 // The fields of one CSV line, with double-quoted fields unquoted.
@@ -73,7 +78,12 @@ void ReadLabels(const std::filesystem::path& directory, bool all_sa, std::map<st
     const std::vector<std::string> fields = CsvFields(line);
     if (fields.size() < 3) continue;
     const bool unchecked = !all_sa && checked < fields.size() && fields[checked] == "no";
-    (*labels)[(directory / fields[0]).string()] = {fields[1], unchecked ? 0 : std::atof(fields[2].c_str())};
+    std::string artist;
+    if (fields.size() > 4) {
+      const size_t at = fields[4].find("artist ");
+      if (at != std::string::npos) artist = fields[4].substr(at + 7, fields[4].find(';', at) - at - 7);
+    }
+    (*labels)[(directory / fields[0]).string()] = {fields[1], unchecked ? 0 : std::atof(fields[2].c_str()), artist};
   }
 }
 
@@ -191,10 +201,16 @@ int main(int argc, char** argv) {
     files.insert(files.end(), here.begin(), here.end());
   }
 
-  std::printf("%-40s %-26s %-10s  %-10s %4s  %-10s %4s  %-10s %5s  %-26s %4s\n", "file", "raag", "label Sa",
-              "Sa | raag", "fit", "next Sa", "fit", "Sa alone", "held", "raag guess", "rank");
-  int labeled = 0, right_with_raag = 0, right_alone = 0;
-  int identified = 0, first = 0, top3 = 0, same_svaras = 0;
+  // Each recording analyzed, for learning raag profiles from the others and
+  // then naming its raag.
+  struct Analysis {
+    std::string name, artist;
+    const Raag* raag;
+    double labeled_sa, held_share;
+    std::vector<SteadyNote> notes, passing;
+    std::vector<TonicCandidate> with_raag, alone;
+  };
+  std::vector<Analysis> analyses;
   for (const std::filesystem::path& file : files) {
     const std::string name = file.filename().string();
     const auto label = labels.find(file.string());
@@ -217,16 +233,29 @@ int main(int argc, char** argv) {
     std::vector<PitchFrame> frames;
     tracker.Push(audio->samples, &frames);
     tracker.Finish(&frames);
-    const std::vector<SteadyNote> notes = HeldPitches(frames);
+    Analysis analysis{name, label != labels.end() && !label->second.artist.empty() ? label->second.artist : file.string(),
+                      raag, labeled_sa, 0, HeldPitches(frames), PassingNotes(frames), {}, {}};
     double held = 0;
-    for (const SteadyNote& note : notes) held += note.end - note.start;
-    const std::vector<TonicCandidate> with_raag = EstimateTonicForSvaras(notes, raag->svaras);
-    const std::vector<TonicCandidate> alone = EstimateTonic(notes);
-    if (with_raag.empty()) {
+    for (const SteadyNote& note : analysis.notes) held += note.end - note.start;
+    analysis.held_share = held / (audio->samples.size() / audio->sample_rate);
+    analysis.with_raag = EstimateTonicForSvaras(analysis.notes, raag->svaras);
+    analysis.alone = EstimateTonic(analysis.notes);
+    if (analysis.with_raag.empty()) {
       std::printf("%-40s %-26s no held notes\n", name.c_str(), raag->name.c_str());
       continue;
     }
+    analyses.push_back(std::move(analysis));
+  }
 
+  std::printf("%-40s %-26s %-10s  %-10s %4s  %-10s %4s  %-10s %5s  %-26s %4s\n", "file", "raag", "label Sa",
+              "Sa | raag", "fit", "next Sa", "fit", "Sa alone", "held", "raag guess", "rank");
+  int labeled = 0, right_with_raag = 0, right_alone = 0;
+  int identified = 0, first = 0, top3 = 0, same_svaras = 0;
+  for (const Analysis& analysis : analyses) {
+    const Raag* raag = analysis.raag;
+    const std::vector<TonicCandidate>& with_raag = analysis.with_raag;
+    const std::vector<TonicCandidate>& alone = analysis.alone;
+    const double labeled_sa = analysis.labeled_sa;
     std::string mark_with = " ", mark_alone = " ";
     if (labeled_sa > 0) {
       ++labeled;
@@ -237,7 +266,15 @@ int main(int argc, char** argv) {
       mark_with = with_ok ? " " : "x";
       mark_alone = alone_ok ? " " : "x";
     }
-    const std::vector<RaagMatch> matches = IdentifyRaag(notes, PassingNotes(frames));
+
+    // Profiles learned from the other artists' recordings with a known Sa,
+    // so that no recording helps name itself or its artist's others.
+    RaagProfiles profiles;
+    for (const Analysis& other : analyses) {
+      if (other.artist == analysis.artist || other.labeled_sa <= 0) continue;
+      AddToProfile(HeldShares(other.notes, other.labeled_sa), &profiles[other.raag]);
+    }
+    const std::vector<RaagMatch> matches = IdentifyRaag(analysis.notes, analysis.passing, &profiles);
     const int rank = static_cast<int>(
         std::find_if(matches.begin(), matches.end(), [&](const RaagMatch& m) { return m.raag == raag; }) -
         matches.begin()) + 1;
@@ -250,12 +287,12 @@ int main(int argc, char** argv) {
                               matches[0].raag->name;
 
     const bool has_next = with_raag.size() > 1;
-    std::printf("%-40s %-26s %-10s %s%-10s %3.0f%%  %-10s %3.0f%% %s%-10s %4.0f%%  %-26s %4d\n", name.c_str(),
-                raag->name.c_str(), labeled_sa > 0 ? NoteName(labeled_sa).c_str() : "?", mark_with.c_str(),
-                NoteName(with_raag[0].frequency).c_str(), 100 * with_raag[0].score,
+    std::printf("%-40s %-26s %-10s %s%-10s %3.0f%%  %-10s %3.0f%% %s%-10s %4.0f%%  %-26s %4d\n",
+                analysis.name.c_str(), raag->name.c_str(), labeled_sa > 0 ? NoteName(labeled_sa).c_str() : "?",
+                mark_with.c_str(), NoteName(with_raag[0].frequency).c_str(), 100 * with_raag[0].score,
                 has_next ? NoteName(with_raag[1].frequency).c_str() : "-", has_next ? 100 * with_raag[1].score : 0.0,
-                mark_alone.c_str(), NoteName(alone[0].frequency).c_str(),
-                100 * held / (audio->samples.size() / audio->sample_rate), guess.c_str(), rank);
+                mark_alone.c_str(), NoteName(alone[0].frequency).c_str(), 100 * analysis.held_share, guess.c_str(),
+                rank);
   }
   if (labeled > 0) {
     std::printf("\nSa right on %d of %d labeled recordings knowing the raag, %d without (x marks a miss).\n",
