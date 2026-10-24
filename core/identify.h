@@ -15,6 +15,8 @@
 #include <array>
 #include <map>
 #include <span>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include "core/raag.h"
@@ -67,6 +69,11 @@ std::map<const Raag*, double> PhraseShares(std::span<const SteadyNote> passing, 
 // raag's chance.
 void Learn(const Raag& raag, const std::array<double, 12>& held, const std::map<const Raag*, double>& phrase_shares,
            RaagLearning* learning);
+
+// The learning as text, one line per raag's profile or phrase chance, to
+// save; and the learning from such text, skipping raags it doesn't know.
+std::string LearningText(const RaagLearning& learning);
+RaagLearning LearningFromText(std::string_view text);
 
 // Each known raag's best match, best first; empty without notes. notes are
 // the held pitches (HeldPitches), passing the notes to follow the melody's

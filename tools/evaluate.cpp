@@ -1,6 +1,6 @@
 // Checks the analysis against a folder of labeled recordings.
 //
-//   bazel run //tools:evaluate -- [--all-sa] [DIRECTORY...]
+//   bazel run //tools:evaluate -- [--all-sa] [--learn-to FILE] [DIRECTORY...]
 //
 // Each DIRECTORY (by default recordings/) holds audio files and, optionally,
 // labels.csv with columns file,raag,sa_hz and, optionally, sa_checked. A Sa
@@ -17,7 +17,9 @@
 // The guesses use what's learned (raag profiles, and how often each raag's
 // phrases turn up by chance) from the other recordings with a known Sa,
 // leaving out those by the same artist ("artist ..." in the
-// labels' notes; otherwise each file counts as its own artist).
+// labels' notes; otherwise each file counts as its own artist). With
+// --learn-to, it also writes what's learned from all of them to FILE, for the
+// app to load.
 #include <unistd.h>
 
 #include <algorithm>
@@ -169,12 +171,15 @@ int main(int argc, char** argv) {
   // Under bazel run, make relative paths relative to where it was run.
   if (const char* directory = std::getenv("BUILD_WORKING_DIRECTORY")) chdir(directory);
   bool all_sa = false;
+  std::string learn_to;
   std::vector<std::filesystem::path> directories;
   for (int i = 1; i < argc; ++i) {
     if (!std::strcmp(argv[i], "--all-sa")) {
       all_sa = true;
+    } else if (!std::strcmp(argv[i], "--learn-to") && i + 1 < argc) {
+      learn_to = argv[++i];
     } else if (argv[i][0] == '-') {
-      std::fprintf(stderr, "usage: evaluate [--all-sa] [DIRECTORY...]\n");
+      std::fprintf(stderr, "usage: evaluate [--all-sa] [--learn-to FILE] [DIRECTORY...]\n");
       return 2;
     } else {
       directories.push_back(argv[i]);
@@ -254,6 +259,21 @@ int main(int argc, char** argv) {
       continue;
     }
     analyses.push_back(std::move(analysis));
+  }
+
+  if (!learn_to.empty()) {
+    RaagLearning learning;
+    for (const Analysis& analysis : analyses) {
+      if (analysis.labeled_sa > 0) Learn(*analysis.raag, analysis.held, analysis.phrase_shares, &learning);
+    }
+    std::ofstream out(learn_to);
+    out << LearningText(learning);
+    if (!out) {
+      std::fprintf(stderr, "%s: can't write\n", learn_to.c_str());
+      return 1;
+    }
+    std::fprintf(stderr, "Learned from %zu recordings of %zu raags; wrote %s\n", analyses.size(),
+                 learning.profiles.size(), learn_to.c_str());
   }
 
   std::printf("%-40s %-26s %-10s  %-10s %4s  %-10s %4s  %-10s %5s  %-26s %4s\n", "file", "raag", "label Sa",

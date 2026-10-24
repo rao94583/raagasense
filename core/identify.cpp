@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <sstream>
 
 #include "core/svara.h"
 #include "core/tonic.h"
@@ -272,6 +274,49 @@ std::vector<RaagMatch> MatchRaag(std::span<const SteadyNote> notes, const Raag& 
   });
   std::sort(matches.begin(), matches.end(), Better);
   return matches;
+}
+
+std::string LearningText(const RaagLearning& learning) {
+  // "profile,<raag>,<recordings>,<12 shares>" and "chance,<raag>,<recordings>,<share>".
+  std::ostringstream text;
+  text.precision(6);
+  for (const auto& [raag, profile] : learning.profiles) {
+    text << "profile," << raag->name << ',' << profile.recordings;
+    for (double share : profile.held) text << ',' << share;
+    text << '\n';
+  }
+  for (const auto& [raag, chance] : learning.phrase_chance) {
+    text << "chance," << raag->name << ',' << chance.recordings << ',' << chance.share << '\n';
+  }
+  return text.str();
+}
+
+RaagLearning LearningFromText(std::string_view text) {
+  RaagLearning learning;
+  std::istringstream lines{std::string(text)};
+  std::string line;
+  while (std::getline(lines, line)) {
+    std::vector<std::string> fields(1);
+    for (char c : line) {
+      if (c == ',') {
+        fields.emplace_back();
+      } else {
+        fields.back() += c;
+      }
+    }
+    if (fields.size() < 4) continue;
+    const Raag* raag = FindRaag(fields[1]);
+    if (!raag) continue;
+    const int recordings = std::atoi(fields[2].c_str());
+    if (fields[0] == "profile" && fields.size() == 15) {
+      RaagProfile& profile = learning.profiles[raag];
+      profile.recordings = recordings;
+      for (int svara = 0; svara < 12; ++svara) profile.held[svara] = std::atof(fields[3 + svara].c_str());
+    } else if (fields[0] == "chance") {
+      learning.phrase_chance[raag] = {recordings, std::atof(fields[3].c_str())};
+    }
+  }
+  return learning;
 }
 
 }  // namespace raagasense

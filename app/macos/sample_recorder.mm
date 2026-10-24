@@ -378,6 +378,10 @@ NSString* MinutesAndSeconds(double seconds) {
   return raag;
 }
 
+- (BOOL)recording {
+  return _timer != nil;
+}
+
 - (NSString*)folder {
   return [NSUserDefaults.standardUserDefaults stringForKey:kFolderKey]
              ?: [NSHomeDirectory() stringByAppendingPathComponent:@"Music/RaagaSense Samples"];

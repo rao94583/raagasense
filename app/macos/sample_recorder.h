@@ -19,4 +19,7 @@
 // The live pitch is not owned and must outlive the recorder.
 - (instancetype)initWithLivePitch:(raagasense::LivePitch*)livePitch host:(id<RSSampleRecorderHost>)host;
 
+// Whether it's recording a sample now.
+@property(nonatomic, readonly) BOOL recording;
+
 @end

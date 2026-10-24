@@ -6,10 +6,12 @@ objc_library(
     srcs = [
         "main.mm",
         "pitch_view.mm",
+        "raag_identifier.mm",
         "sample_recorder.mm",
     ],
     hdrs = [
         "pitch_view.h",
+        "raag_identifier.h",
         "sample_recorder.h",
     ],
     sdk_frameworks = ["AppKit"],

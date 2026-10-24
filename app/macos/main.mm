@@ -1,11 +1,13 @@
 // RaagaSense for macOS: one window showing a sound input's pitch against a
-// svara grid for a chosen Sa, and another for recording labeled samples.
+// svara grid, for a chosen Sa or the one found, and its best guesses at the
+// raag; and another for recording labeled samples.
 #import <AppKit/AppKit.h>
 
 #include <cmath>
 #include <memory>
 
 #import "app/macos/pitch_view.h"
+#import "app/macos/raag_identifier.h"
 #import "app/macos/sample_recorder.h"
 #include "platform/audio_input.h"
 #include "platform/live_pitch.h"
@@ -23,6 +25,29 @@ double NoteFrequency(int note) { return kC3 * std::pow(2.0, note / 12.0); }
 // system default.
 NSString* const kInputIdKey = @"InputID";
 
+// How often the raag guesses update, in seconds, and how many seconds of held
+// notes they need before showing.
+constexpr double kGuessInterval = 2;
+constexpr double kMinHeldToGuess = 10;
+
+// "A♯" for 233 Hz.
+NSString* NoteName(double frequency) {
+  const long semitones = std::lround(12 * std::log2(frequency / kC3));
+  return @(kNoteNames[((semitones % 12) + 12) % 12]);
+}
+
+// What's been learned from labeled recordings, from learned.csv in the
+// sample recorder's folder (written by evaluate --learn-to); empty if there's
+// none.
+raagasense::RaagLearning LoadLearning() {
+  NSString* folder = [NSUserDefaults.standardUserDefaults stringForKey:@"SampleFolder"]
+                         ?: [NSHomeDirectory() stringByAppendingPathComponent:@"Music/RaagaSense Samples"];
+  NSString* text = [NSString stringWithContentsOfFile:[folder stringByAppendingPathComponent:@"learned.csv"]
+                                             encoding:NSUTF8StringEncoding
+                                                error:nil];
+  return text ? raagasense::LearningFromText(text.UTF8String) : raagasense::RaagLearning{};
+}
+
 }  // namespace
 
 @interface RSAppDelegate : NSObject <NSApplicationDelegate, NSMenuDelegate, RSSampleRecorderHost>
@@ -34,6 +59,10 @@ NSString* const kInputIdKey = @"InputID";
   RSPitchView* _pitchView;
   NSPopUpButton* _inputPopUp;
   NSButton* _listenButton;
+  NSPopUpButton* _saPopUp;
+  NSTextField* _raagLabel;
+  RSRaagIdentifier* _identifier;
+  NSTimer* _guessTimer;
   RSSampleRecorder* _sampleRecorder;
 }
 
@@ -41,13 +70,27 @@ NSString* const kInputIdKey = @"InputID";
   _livePitch = std::make_unique<raagasense::LivePitch>();
   [self buildMenu];
 
+  // Auto follows the Sa of the best raag guess.
   NSPopUpButton* saPopUp = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
+  [saPopUp addItemWithTitle:@"Auto"];
+  [saPopUp.menu addItem:[NSMenuItem separatorItem]];
   for (int note = 0; note < 12; ++note) {
-    [saPopUp addItemWithTitle:[NSString stringWithFormat:@"%@  (%.1f Hz)", @(kNoteNames[note]), NoteFrequency(note)]];
+    NSMenuItem* item = [saPopUp.menu
+        addItemWithTitle:[NSString stringWithFormat:@"%@  (%.1f Hz)", @(kNoteNames[note]), NoteFrequency(note)]
+                  action:nil
+           keyEquivalent:@""];
+    item.tag = note;
   }
-  [saPopUp selectItemAtIndex:kDefaultNote];
+  [saPopUp selectItemAtIndex:0];
   saPopUp.target = self;
   saPopUp.action = @selector(saChanged:);
+  _saPopUp = saPopUp;
+
+  _identifier = [[RSRaagIdentifier alloc] initWithLivePitch:_livePitch.get() learning:LoadLearning()];
+  _raagLabel = [NSTextField labelWithString:@""];
+  _raagLabel.font = [NSFont systemFontOfSize:15];
+  _raagLabel.lineBreakMode = NSLineBreakByTruncatingTail;
+  [self showRaagIdle];
 
   _inputPopUp = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
   _inputPopUp.menu.delegate = self;
@@ -71,10 +114,14 @@ NSString* const kInputIdKey = @"InputID";
   _pitchView.livePitch = _livePitch.get();
   _pitchView.saFrequency = NoteFrequency(kDefaultNote);
 
-  NSStackView* content = [NSStackView stackViewWithViews:@[ controls, _pitchView ]];
+  NSStackView* raagRow = [NSStackView stackViewWithViews:@[ _raagLabel ]];
+  raagRow.edgeInsets = NSEdgeInsetsMake(0, 14, 8, 14);
+
+  NSStackView* content = [NSStackView stackViewWithViews:@[ controls, raagRow, _pitchView ]];
   content.orientation = NSUserInterfaceLayoutOrientationVertical;
   content.spacing = 0;
   [controls.widthAnchor constraintEqualToAnchor:content.widthAnchor].active = YES;
+  [raagRow.widthAnchor constraintEqualToAnchor:content.widthAnchor].active = YES;
   [_pitchView.widthAnchor constraintEqualToAnchor:content.widthAnchor].active = YES;
 
   _window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 900, 560)
@@ -110,7 +157,42 @@ NSString* const kInputIdKey = @"InputID";
 }
 
 - (void)saChanged:(NSPopUpButton*)sender {
-  _pitchView.saFrequency = NoteFrequency(static_cast<int>(sender.indexOfSelectedItem));
+  if (sender.indexOfSelectedItem > 0) _pitchView.saFrequency = NoteFrequency(static_cast<int>(sender.selectedTag));
+}
+
+- (void)showRaagIdle {
+  _raagLabel.stringValue =
+      _identifier.learnedRaags > 0
+          ? [NSString stringWithFormat:@"Raag: press Listen to start (learned from recordings of %lu raags)",
+                                       static_cast<unsigned long>(_identifier.learnedRaags)]
+          : @"Raag: press Listen to start (no learned.csv found, so from svaras and phrases alone)";
+}
+
+// Updates the raag guesses, and the Sa if it's on Auto.
+- (void)guessRaag {
+  __weak RSAppDelegate* weakSelf = self;
+  [_identifier update:^(const RSRaagGuesses& guesses) {
+    RSAppDelegate* delegate = weakSelf;
+    if (!delegate) return;
+    const auto& matches = guesses.matches;
+    if (matches.empty() || guesses.held_seconds < kMinHeldToGuess) {
+      delegate->_raagLabel.stringValue =
+          [NSString stringWithFormat:@"Raag: listening… (%.0f s of held notes of the %.0f s needed)",
+                                     guesses.held_seconds, kMinHeldToGuess];
+      return;
+    }
+    NSMutableArray<NSString*>* others = [NSMutableArray array];
+    for (size_t i = 1; i < matches.size() && i < 3; ++i) {
+      [others addObject:[NSString stringWithFormat:@"%s (Sa %@)", matches[i].raag->name.c_str(), NoteName(matches[i].sa)]];
+    }
+    delegate->_raagLabel.stringValue = [NSString
+        stringWithFormat:@"Raag: %s, Sa %@   ·   or %@   ·   %d:%02d heard", matches[0].raag->name.c_str(),
+                         NoteName(matches[0].sa), [others componentsJoinedByString:@", "],
+                         static_cast<int>(guesses.heard_seconds) / 60, static_cast<int>(guesses.heard_seconds) % 60];
+    if (delegate->_saPopUp.indexOfSelectedItem == 0 && !delegate->_sampleRecorder.recording) {
+      delegate->_pitchView.saFrequency = matches[0].sa;
+    }
+  }];
 }
 
 // Lists the connected inputs afresh each time the input menu opens, selecting
@@ -152,6 +234,22 @@ NSString* const kInputIdKey = @"InputID";
   [self startListening:nil];
 }
 
+// Keeps the raag guesses updating while listening.
+- (void)startGuessing {
+  [_guessTimer invalidate];
+  __weak RSAppDelegate* weakSelf = self;
+  _guessTimer = [NSTimer scheduledTimerWithTimeInterval:kGuessInterval
+                                                repeats:YES
+                                                  block:^(NSTimer* timer) {
+                                                    RSAppDelegate* delegate = weakSelf;
+                                                    if (!delegate || !delegate->_livePitch->running()) {
+                                                      [timer invalidate];
+                                                      return;
+                                                    }
+                                                    [delegate guessRaag];
+                                                  }];
+}
+
 // Starts listening, and calls done, if given, with nil or the error, which
 // is otherwise shown in an alert.
 - (void)startListening:(void (^)(NSString* error))done {
@@ -175,6 +273,8 @@ NSString* const kInputIdKey = @"InputID";
       return;
     }
     delegate->_listenButton.title = @"Stop";
+    delegate->_raagLabel.stringValue = @"Raag: listening…";
+    [delegate startGuessing];
     if (done) done(nil);
   });
 }

@@ -118,5 +118,22 @@ TEST(Learn, ProfilesAndChance) {
   EXPECT_NEAR(learning.phrase_chance[&bhoopali].share, 0.3, 1e-9);
 }
 
+TEST(Learning, RoundTripsAsText) {
+  const Raag& yaman = *FindRaag("Yaman");
+  const Raag& bhoopali = *FindRaag("Bhoopali");
+  RaagLearning learning;
+  std::array<double, 12> held = {};
+  held[kGa] = 0.25;
+  held[kNi] = 0.75;
+  Learn(yaman, held, {{&yaman, 0.5}, {&bhoopali, 0.125}}, &learning);
+  const RaagLearning read = LearningFromText(LearningText(learning) + "profile,Raag Imaginary,1\n");
+  ASSERT_EQ(read.profiles.size(), 1u);
+  EXPECT_EQ(read.profiles.at(&yaman).recordings, 1);
+  EXPECT_DOUBLE_EQ(read.profiles.at(&yaman).held[kNi], 0.75);
+  ASSERT_EQ(read.phrase_chance.size(), 1u);
+  EXPECT_EQ(read.phrase_chance.at(&bhoopali).recordings, 1);
+  EXPECT_DOUBLE_EQ(read.phrase_chance.at(&bhoopali).share, 0.125);
+}
+
 }  // namespace
 }  // namespace raagasense

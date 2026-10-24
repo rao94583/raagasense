@@ -17,6 +17,8 @@ bazel run //tools:analyze -- --tonic --svaras "S g m d n" recording.mp3  # ...kn
 bazel run //tools:analyze -- --csv recording.mp3             # per-frame pitch
 bazel run //tools:plot -- recording.mp3 out.png              # pitch over svara grid
 bazel run //tools:evaluate -- recordings ~/Music/RaagaSense\ Samples  # check against labeled folders
+bazel run //tools:evaluate -- --all-sa --learn-to ~/Music/RaagaSense\ Samples/learned.csv \
+    recordings ~/Music/RaagaSense\ Samples                   # ...and save what's learned for the app
 bazel run //tools:record -- --list                           # sound inputs
 bazel run //tools:record -- --input M2 --channels 3,4 recordings/yaman.m4a
 ```
@@ -53,5 +55,5 @@ session, and the plot draws into any Core Graphics context).
 - [x] Characteristic phrases (tanarang.com's, for 105 raags), scored above chance
 - [x] Raag profiles learned from labeled recordings
 - [ ] Learned movement between svaras, without favoring raags that have recordings
-- [ ] Raag guesses in the app
+- [x] Live raag guesses and an Auto Sa in the app, from `learned.csv`
 - [ ] iOS app
