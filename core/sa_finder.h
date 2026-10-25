@@ -1,0 +1,85 @@
+// Finds Sa as a performance of a known raag comes in, and says when it's sure
+// enough: when there are enough held notes, the best Sa has held its place for
+// a while, and either the raag matches clearly better from it than from the
+// next best Sa or it has held its place for much longer. It also follows which
+// of the raag's svaras have been heard from that Sa, and can hold off saying
+// it's done until all those the raag can't do without have been.
+#pragma once
+
+#include <span>
+#include <vector>
+
+#include "core/pitch.h"
+#include "core/raag.h"
+#include "core/steady.h"
+
+namespace raagasense {
+
+struct SaFinderOptions {
+  // Held notes needed, in seconds. Played a second at a time through 33
+  // labeled recordings, 30 s made it sure of a wrong Sa twice (a Sa's Ma, and
+  // a komal Re); 45 s never did, and still got sure on 22 of them.
+  double min_held_seconds = 45;
+  // How long the best Sa must have stayed the best, in seconds of the
+  // stream, with a lead in MatchRaag's score of at least min_margin...
+  // Since steady notes may be as short as 0.08 s, a lead of 0.1 let it be
+  // sure of a Sa's Ma once; 0.15 is sure of 23 of the 33, all right.
+  double stable_seconds = 20;
+  double min_margin = 0.15;
+  // ...or with any lead.
+  double long_stable_seconds = 90;
+  // Or, with a clear lead held for a while, fewer held notes: for music
+  // with few, such as film songs with long instrumental passages. On the
+  // 131 labeled recordings it was never sure of, the best Sa was right on all
+  // but a few, often for minutes, with under 45 s of held notes. With this,
+  // it's sure on 115 of the 131 (97 before) and right on 112 (95).
+  double quick_held_seconds = 25;
+  double quick_margin = 1;
+  double quick_stable_seconds = 30;
+  // A svara counts as heard once it has this share of the held time.
+  double heard_share = 0.01;
+  // Whether being done also waits, once sure of Sa, for every svara the raag
+  // can't do without to be heard, and for at most how many seconds more.
+  bool wait_for_svaras = false;
+  double max_wait_seconds = 120;
+};
+
+struct SaStatus {
+  // Hz; 0 until there are held notes.
+  double sa = 0;
+  // How far this Sa's MatchRaag score is ahead of the next best Sa's.
+  double margin = 0;
+  double held_seconds = 0;
+  // How long this Sa has been the best, in seconds of the stream.
+  double stable_seconds = 0;
+  bool confident = false;
+  // The share of the held time on each svara from this Sa, and the svaras
+  // the raag can't do without that haven't been heard yet.
+  double shares[12] = {};
+  std::vector<int> missing;
+  // Sure of Sa and, if waiting for them, all the svaras heard or waited for
+  // long enough.
+  bool done = false;
+};
+
+class SaFinder {
+ public:
+  // The raag must outlive the finder.
+  explicit SaFinder(const Raag& raag, const SaFinderOptions& options = {});
+
+  // Adds frames later than all those added before, and updates the status.
+  void Add(std::span<const PitchFrame> frames);
+  const SaStatus& status() const { return status_; }
+
+ private:
+  const Raag& raag_;
+  SaFinderOptions options_;
+  std::vector<PitchFrame> frames_;
+  SaStatus status_;
+  // The stream times when the current best Sa became the best, and when the
+  // finder became sure of it.
+  double best_since_ = 0;
+  double confident_since_ = 0;
+};
+
+}  // namespace raagasense

@@ -1,0 +1,14 @@
+common --cxxopt=-std=c++20
+common --host_cxxopt=-std=c++20
+
+common:macos --macos_minimum_os=13.0
+common:macos --host_macos_minimum_os=13.0
+common --enable_platform_specific_config
+
+# The pitch tracker runs on live audio; unoptimized builds can fall behind.
+build --per_file_copt=core/.*@-O2
+
+test --test_output=errors
+
+# Local, untracked overrides (e.g. --disk_cache).
+try-import %workspace%/user.bazelrc

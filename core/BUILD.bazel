@@ -1,0 +1,110 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+# Plain C++ with no Apple frameworks, shared by the tools and every app.
+cc_library(
+    name = "core",
+    srcs = [
+        "identify.cpp",
+        "melody.cpp",
+        "pitch.cpp",
+        "raag.cpp",
+        "raag_phrases.cpp",
+        "sa_finder.cpp",
+        "steady.cpp",
+        "svara.cpp",
+        "tonic.cpp",
+    ],
+    hdrs = [
+        "identify.h",
+        "melody.h",
+        "pitch.h",
+        "raag.h",
+        "raag_phrases.h",
+        "sa_finder.h",
+        "steady.h",
+        "svara.h",
+        "tonic.h",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "pitch_test",
+    size = "small",
+    srcs = ["pitch_test.cpp"],
+    deps = [
+        ":core",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "svara_test",
+    size = "small",
+    srcs = ["svara_test.cpp"],
+    deps = [
+        ":core",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "steady_test",
+    size = "small",
+    srcs = ["steady_test.cpp"],
+    deps = [
+        ":core",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "tonic_test",
+    size = "small",
+    srcs = ["tonic_test.cpp"],
+    deps = [
+        ":core",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "melody_test",
+    size = "small",
+    srcs = ["melody_test.cpp"],
+    deps = [
+        ":core",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "raag_test",
+    size = "small",
+    srcs = ["raag_test.cpp"],
+    deps = [
+        ":core",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "identify_test",
+    size = "small",
+    srcs = ["identify_test.cpp"],
+    deps = [
+        ":core",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "sa_finder_test",
+    size = "small",
+    srcs = ["sa_finder_test.cpp"],
+    deps = [
+        ":core",
+        "@googletest//:gtest_main",
+    ],
+)

@@ -1,0 +1,32 @@
+load("@rules_apple//apple:macos.bzl", "macos_application")
+load("@rules_cc//cc:objc_library.bzl", "objc_library")
+
+objc_library(
+    name = "frontend",
+    srcs = [
+        "main.mm",
+        "pitch_view.mm",
+        "raag_identifier.mm",
+        "sample_recorder.mm",
+    ],
+    hdrs = [
+        "pitch_view.h",
+        "raag_identifier.h",
+        "sample_recorder.h",
+    ],
+    sdk_frameworks = ["AppKit"],
+    deps = [
+        "//core",
+        "//platform:audio_input",
+        "//platform:live_pitch",
+        "//platform:pitch_plot",
+    ],
+)
+
+macos_application(
+    name = "RaagaSense",
+    bundle_id = "com.github.rao94583.raagasense",
+    infoplists = ["Info.plist"],
+    minimum_os_version = "13.0",
+    deps = [":frontend"],
+)

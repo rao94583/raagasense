@@ -1,0 +1,56 @@
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:objc_library.bzl", "objc_library")
+
+cc_binary(
+    name = "analyze",
+    srcs = ["analyze.cpp"],
+    deps = [
+        "//core",
+        "//platform:audio_file",
+    ],
+)
+
+objc_library(
+    name = "plot_main",
+    srcs = ["plot.mm"],
+    sdk_frameworks = [
+        "CoreGraphics",
+        "Foundation",
+        "ImageIO",
+        "UniformTypeIdentifiers",
+    ],
+    deps = [
+        "//core",
+        "//platform:audio_file",
+        "//platform:pitch_plot",
+    ],
+)
+
+cc_binary(
+    name = "plot",
+    deps = [":plot_main"],
+)
+
+objc_library(
+    name = "record_main",
+    srcs = ["record.mm"],
+    sdk_frameworks = [
+        "AVFoundation",
+        "Foundation",
+    ],
+    deps = ["//platform:audio_input"],
+)
+
+cc_binary(
+    name = "record",
+    deps = [":record_main"],
+)
+
+cc_binary(
+    name = "evaluate",
+    srcs = ["evaluate.cpp"],
+    deps = [
+        "//core",
+        "//platform:audio_file",
+    ],
+)
