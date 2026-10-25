@@ -5,8 +5,10 @@ load("@rules_cc//cc:cc_test.bzl", "cc_test")
 cc_library(
     name = "core",
     srcs = [
+        "annotation.cpp",
         "identify.cpp",
         "melody.cpp",
+        "phrase.cpp",
         "pitch.cpp",
         "raag.cpp",
         "raag_phrases.cpp",
@@ -16,8 +18,10 @@ cc_library(
         "tonic.cpp",
     ],
     hdrs = [
+        "annotation.h",
         "identify.h",
         "melody.h",
+        "phrase.h",
         "pitch.h",
         "raag.h",
         "raag_phrases.h",
@@ -27,6 +31,16 @@ cc_library(
         "tonic.h",
     ],
     visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "annotation_test",
+    size = "small",
+    srcs = ["annotation_test.cpp"],
+    deps = [
+        ":core",
+        "@googletest//:gtest_main",
+    ],
 )
 
 cc_test(
@@ -73,6 +87,16 @@ cc_test(
     name = "melody_test",
     size = "small",
     srcs = ["melody_test.cpp"],
+    deps = [
+        ":core",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "phrase_test",
+    size = "small",
+    srcs = ["phrase_test.cpp"],
     deps = [
         ":core",
         "@googletest//:gtest_main",

@@ -14,6 +14,7 @@ struct AudioData {
 };
 
 // The file's audio, or nullopt with *error describing why it can't be read.
-std::optional<AudioData> ReadAudioFile(const std::string& path, std::string* error);
+// A positive max_seconds decodes only that prefix; 0 reads the whole file.
+std::optional<AudioData> ReadAudioFile(const std::string& path, std::string* error, double max_seconds = 0);
 
 }  // namespace raagasense

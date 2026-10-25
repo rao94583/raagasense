@@ -23,6 +23,35 @@ void Hold(std::vector<SteadyNote>* notes, double cents, double seconds) {
 
 TEST(IdentifyRaag, NoNotes) { EXPECT_TRUE(IdentifyRaag({}).empty()); }
 
+TEST(IdentifyRaag, TracePreservesPredictionsAndAlternativeTonicHypotheses) {
+  std::vector<SteadyNote> notes;
+  for (int cents : {0, 200, 400, 600, 700, 900, 1100}) Hold(&notes, cents, 1);
+  std::vector<SteadyNote> passing;
+  for (int cents : {-100, 200, 400}) Hold(&passing, cents, 0.05);
+  RaagLearning learning;
+  Learn(*FindRaag("Yaman"), HeldShares(notes, kSa), &learning);
+  IdentifyTrace trace;
+  const auto traced = IdentifyRaag(notes, passing, &learning, {}, &trace);
+  const auto normal = IdentifyRaag(notes, passing, &learning);
+  ASSERT_EQ(traced.size(), normal.size());
+  ASSERT_GT(trace.candidates.size(), 1u);
+  EXPECT_EQ(trace.hypotheses.size(), trace.candidates.size() * Raags().size());
+  for (size_t i = 0; i < normal.size(); ++i) {
+    EXPECT_EQ(traced[i].raag, normal[i].raag);
+    EXPECT_DOUBLE_EQ(traced[i].sa, normal[i].sa);
+    EXPECT_DOUBLE_EQ(traced[i].score, normal[i].score);
+    EXPECT_EQ(traced[i].foreign_svaras, normal[i].foreign_svaras);
+    const auto best = std::find_if(trace.hypotheses.begin(), trace.hypotheses.end(),
+                                   [&](const auto& pair) { return pair.raag == traced[i].raag; });
+    ASSERT_NE(best, trace.hypotheses.end());
+    EXPECT_DOUBLE_EQ(best->score, traced[i].score);
+    EXPECT_DOUBLE_EQ(best->sa, traced[i].sa);
+  }
+  EXPECT_TRUE(IdentifyRaag({}, {}, nullptr, {}, &trace).empty());
+  EXPECT_TRUE(trace.candidates.empty());
+  EXPECT_TRUE(trace.hypotheses.empty());
+}
+
 TEST(IdentifyRaagAtSa, UsesTheSuppliedTonicEvenWhenSaIsNotHeld) {
   std::vector<SteadyNote> notes;
   for (int cents : {100, 400, 600, 900, 1100}) Hold(&notes, cents, 1);
@@ -153,39 +182,77 @@ TEST(PhraseShares, FindsPhrasesInOrderWithGraceNotes) {
   const std::map<const Raag*, double> forward = PhraseShares(Passing({-100, 0, 200, 400}), kSa);
   const std::map<const Raag*, double> backward = PhraseShares(Passing({400, 200, -100}), kSa);
   const double one = 1.0 / yaman.phrases.size();
-  EXPECT_GE(forward.at(&yaman), one);
+  EXPECT_NEAR(forward.at(&yaman), std::exp(-0.5) * one, 1e-12);
   EXPECT_LT(backward.at(&yaman), forward.at(&yaman));
 }
 
-TEST(Learn, ProfilesAndChance) {
+TEST(Learn, Profiles) {
   const Raag& yaman = *FindRaag("Yaman");
-  const Raag& bhoopali = *FindRaag("Bhoopali");
   RaagLearning learning;
-  const std::map<const Raag*, double> shares = {{&yaman, 0.5}, {&bhoopali, 0.2}};
-  Learn(yaman, {}, shares, &learning);
-  Learn(yaman, {}, {{&yaman, 0.5}, {&bhoopali, 0.4}}, &learning);
+  Learn(yaman, {}, &learning);
+  Learn(yaman, {}, &learning);
   EXPECT_EQ(learning.profiles[&yaman].recordings, 2);
-  // Chance is learned only from other raags' recordings.
-  EXPECT_EQ(learning.phrase_chance.count(&yaman), 0u);
-  EXPECT_EQ(learning.phrase_chance[&bhoopali].recordings, 2);
-  EXPECT_NEAR(learning.phrase_chance[&bhoopali].share, 0.3, 1e-9);
 }
 
 TEST(Learning, RoundTripsAsText) {
   const Raag& yaman = *FindRaag("Yaman");
-  const Raag& bhoopali = *FindRaag("Bhoopali");
   RaagLearning learning;
   std::array<double, 12> held = {};
   held[kGa] = 0.25;
   held[kNi] = 0.75;
-  Learn(yaman, held, {{&yaman, 0.5}, {&bhoopali, 0.125}}, &learning);
-  const RaagLearning read = LearningFromText(LearningText(learning) + "profile,Raag Imaginary,1\n");
+  Learn(yaman, held, &learning);
+  const RaagLearning read = LearningFromText(LearningText(learning) +
+                                            "profile,Raag Imaginary,1\nchance,Bhoopali,2,0.125\n");
   ASSERT_EQ(read.profiles.size(), 1u);
   EXPECT_EQ(read.profiles.at(&yaman).recordings, 1);
   EXPECT_DOUBLE_EQ(read.profiles.at(&yaman).held[kNi], 0.75);
-  ASSERT_EQ(read.phrase_chance.size(), 1u);
-  EXPECT_EQ(read.phrase_chance.at(&bhoopali).recordings, 1);
-  EXPECT_DOUBLE_EQ(read.phrase_chance.at(&bhoopali).share, 0.125);
+  EXPECT_EQ(LearningText(read), LearningText(learning));
+}
+
+TEST(IdentifyRaagAtSa, PhraseEvidenceWorksWithoutLearnedProfiles) {
+  std::vector<SteadyNote> notes;
+  for (int cents : {0, 200, 400, 600, 700, 900, 1100}) Hold(&notes, cents, 1);
+  const auto passing = Passing({-100, 200, 400});
+  const auto with = IdentifyRaagAtSa(notes, kSa, passing);
+  const auto without = IdentifyRaagAtSa(notes, kSa, passing, nullptr, IdentifyOptions{false});
+  const auto score = [](const auto& matches) {
+    const auto yaman = FindRaag("Yaman");
+    return std::find_if(matches.begin(), matches.end(), [yaman](const auto& m) { return m.raag == yaman; })->score;
+  };
+  EXPECT_GT(score(with), score(without));
+  const auto wrong_contour = IdentifyRaagAtSa(notes, kSa, Passing({1100, 200, 400}));
+  EXPECT_GT(score(with), score(wrong_contour));
+  const auto repeat = IdentifyRaagAtSa(notes, kSa, passing);
+  for (size_t i = 0; i < with.size(); ++i) {
+    EXPECT_EQ(with[i].raag, repeat[i].raag);
+    EXPECT_DOUBLE_EQ(with[i].score, repeat[i].score);
+  }
+}
+
+TEST(IdentifyRaagAtSa, PhraseEvidenceIsNeutralWithoutPassingNotes) {
+  std::vector<SteadyNote> notes;
+  for (int cents : {0, 200, 400, 600, 700, 900, 1100}) Hold(&notes, cents, 1);
+  const auto with = IdentifyRaagAtSa(notes, kSa);
+  const auto without = IdentifyRaagAtSa(notes, kSa, {}, nullptr, IdentifyOptions{false});
+  ASSERT_EQ(with.size(), without.size());
+  for (size_t i = 0; i < with.size(); ++i) {
+    EXPECT_EQ(with[i].raag, without[i].raag);
+    EXPECT_DOUBLE_EQ(with[i].score, without[i].score);
+  }
+}
+
+TEST(IdentifyRaagAtSa, PhraseContextDoesNotAccumulateForever) {
+  std::vector<SteadyNote> notes;
+  for (int cents : {0, 200, 400, 600, 700, 900, 1100}) Hold(&notes, cents, 1);
+  auto passing = Passing({-100, 200, 400});
+  passing.push_back({200, 201, kSa});
+  const auto with = IdentifyRaagAtSa(notes, kSa, passing);
+  const auto without = IdentifyRaagAtSa(notes, kSa, passing, nullptr, IdentifyOptions{false});
+  ASSERT_EQ(with.size(), without.size());
+  for (size_t i = 0; i < with.size(); ++i) {
+    EXPECT_EQ(with[i].raag, without[i].raag);
+    EXPECT_DOUBLE_EQ(with[i].score, without[i].score);
+  }
 }
 
 TEST(RaagTracker, KeepsTheLeaderUnlessClearlyBeatenForAWhile) {

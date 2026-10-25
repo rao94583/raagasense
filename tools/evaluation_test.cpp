@@ -38,6 +38,15 @@ TEST(Labels, ReadsColumnsByNameAndPreservesEscapedQuotes) {
   EXPECT_DOUBLE_EQ(labels[0].sa, 220);
 }
 
+TEST(Labels, ExplicitUnknownArtistDoesNotFallBackToOldNotes) {
+  std::istringstream in("file,raag,sa_hz,artist,notes\na.wav,Yaman,220,,artist Old Name\n");
+  std::vector<Label> labels;
+  std::string error;
+  ASSERT_TRUE(ReadLabels(in, false, &labels, &error)) << error;
+  ASSERT_EQ(labels.size(), 1u);
+  EXPECT_TRUE(labels[0].artist.empty());
+}
+
 TEST(PitchCsv, ReadsAnalyzeOutputAndUnvoicedFrames) {
   std::istringstream in("time,frequency,confidence,svara,deviation\r\n"
                         "0.043,220,0.9,S,0\r\n0.053,,0.1,,\r\n");
@@ -68,6 +77,33 @@ TEST(PitchCsv, RejectsNonfiniteOutOfOrderAndMalformedFrames) {
     std::vector<PitchFrame> frames;
     std::string error;
     EXPECT_FALSE(ReadPitchCsv(in, &frames, &error)) << body;
+    EXPECT_FALSE(error.empty());
+  }
+}
+
+TEST(SaragaPitch, PreservesTimingVoicingAndFrequencyAndCanReadAPrefix) {
+  const std::string data = "0.000000e+00\t0.000000e+00\r\n4.444444e-03\t220.5\r\n0.008888889 221\n";
+  std::istringstream in(data);
+  std::vector<PitchFrame> frames;
+  std::string error;
+  ASSERT_TRUE(ReadSaragaPitch(in, &frames, &error)) << error;
+  ASSERT_EQ(frames.size(), 3u);
+  EXPECT_FALSE(frames[0].voiced);
+  EXPECT_TRUE(frames[1].voiced);
+  EXPECT_DOUBLE_EQ(frames[1].frequency, 220.5);
+  EXPECT_DOUBLE_EQ(frames[1].time, 0.004444444);
+  std::istringstream prefix(data);
+  ASSERT_TRUE(ReadSaragaPitch(prefix, &frames, &error, 0.008888889)) << error;
+  ASSERT_EQ(frames.size(), 2u);
+}
+
+TEST(SaragaPitch, RejectsInvalidTracksRatherThanSilentlyDroppingFrames) {
+  for (const char* data : {"", "0 nan\n", "0 -220\n", "-1 220\n", "0 220\n0 221\n",
+                          "0.01 220\n0 221\n", "0 220 extra\n", "0\n", "nan 220\n"}) {
+    std::istringstream in(data);
+    std::vector<PitchFrame> frames;
+    std::string error;
+    EXPECT_FALSE(ReadSaragaPitch(in, &frames, &error)) << data;
     EXPECT_FALSE(error.empty());
   }
 }

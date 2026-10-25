@@ -1,5 +1,14 @@
 load("@rules_apple//apple:macos.bzl", "macos_application")
 load("@rules_cc//cc:objc_library.bzl", "objc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+objc_library(
+    name = "annotation_ui",
+    srcs = ["annotation_window.mm"],
+    hdrs = ["annotation_window.h"],
+    sdk_frameworks = ["AppKit", "AVFoundation"],
+    deps = ["//core", "//platform:audio_file"],
+)
 
 objc_library(
     name = "frontend",
@@ -14,13 +23,37 @@ objc_library(
         "raag_identifier.h",
         "sample_recorder.h",
     ],
-    sdk_frameworks = ["AppKit"],
+    sdk_frameworks = ["AppKit", "AVFoundation"],
     deps = [
+        ":annotation_ui",
         "//core",
         "//platform:audio_input",
+        "//platform:audio_file",
         "//platform:live_pitch",
         "//platform:pitch_plot",
     ],
+)
+
+objc_library(
+    name = "annotation_window_test_lib",
+    testonly = True,
+    srcs = ["annotation_window_test.mm"],
+    sdk_frameworks = ["AppKit", "AVFoundation"],
+    deps = [
+        ":annotation_ui",
+        "//core",
+        "//platform:audio_file",
+        "//tools:evaluation",
+        "@googletest//:gtest",
+    ],
+    alwayslink = True,
+)
+
+cc_test(
+    name = "annotation_window_test",
+    size = "small",
+    deps = [":annotation_window_test_lib", "@googletest//:gtest_main"],
+    tags = ["requires-window-server"],
 )
 
 macos_application(

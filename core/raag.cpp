@@ -4,6 +4,7 @@
 #include <cctype>
 
 #include "core/raag_phrases.h"
+#include "core/phrase.h"
 #include "core/svara.h"
 
 namespace raagasense {
@@ -80,17 +81,6 @@ std::string Normalize(std::string_view name) {
   return normalized;
 }
 
-// The svaras of a phrase as written in RaagPhrases, repeats collapsed and
-// octave marks dropped.
-std::vector<int> PhraseSvaras(std::string_view phrase) {
-  std::vector<int> svaras;
-  for (char c : phrase) {
-    const int svara = c == ' ' || c == '.' || c == '\'' ? -1 : SvaraFromLetter(std::string_view(&c, 1));
-    if (svara >= 0 && (svaras.empty() || svaras.back() != svara)) svaras.push_back(svara);
-  }
-  return svaras;
-}
-
 // The raags with their phrases from RaagPhrases, found by name or alias.
 std::vector<Raag> WithPhrases(std::vector<Raag> raags) {
   for (const auto& [name, phrases] : RaagPhrases()) {
@@ -99,8 +89,18 @@ std::vector<Raag> WithPhrases(std::vector<Raag> raags) {
       for (const std::string& alias : raag.aliases) named = named || Normalize(alias) == Normalize(name);
       if (!named) continue;
       for (const std::string& phrase : phrases) {
-        std::vector<int> svaras = PhraseSvaras(phrase);
-        if (svaras.size() >= 3) raag.phrases.push_back(std::move(svaras));
+        std::vector<int> svaras = ParsePhrase(phrase);
+        // Imported notation can include unrelated examples or a different
+        // raag variant. Do not use contradictory templates as evidence;
+        // retain the source strings for a separate catalog audit.
+        const bool compatible = std::all_of(svaras.begin(), svaras.end(), [&](int pitch) {
+          const int svara = (pitch % 12 + 12) % 12;
+          return std::find(raag.svaras.begin(), raag.svaras.end(), svara) != raag.svaras.end();
+        });
+        if (svaras.size() >= 3 && compatible &&
+            std::find(raag.phrases.begin(), raag.phrases.end(), svaras) == raag.phrases.end()) {
+          raag.phrases.push_back(std::move(svaras));
+        }
       }
     }
   }

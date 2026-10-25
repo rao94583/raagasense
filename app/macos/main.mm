@@ -4,9 +4,11 @@
 #import <AppKit/AppKit.h>
 
 #include <cmath>
+#include <cstdlib>
 #include <memory>
 
 #import "app/macos/pitch_view.h"
+#import "app/macos/annotation_window.h"
 #import "app/macos/raag_identifier.h"
 #import "app/macos/sample_recorder.h"
 #include "platform/audio_input.h"
@@ -64,6 +66,7 @@ raagasense::RaagLearning LoadLearning() {
   RSRaagIdentifier* _identifier;
   NSTimer* _guessTimer;
   RSSampleRecorder* _sampleRecorder;
+  RSAnnotationWindow* _annotationWindow;
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification*)notification {
@@ -102,12 +105,13 @@ raagasense::RaagLearning LoadLearning() {
   _listenButton.keyEquivalent = @" ";
 
   NSButton* recordButton = [NSButton buttonWithTitle:@"Record Sample…" target:self action:@selector(recordSample:)];
+  NSButton* annotateButton = [NSButton buttonWithTitle:@"Label & Review…" target:self action:@selector(annotateRecordings:)];
   NSButton* startOverButton = [NSButton buttonWithTitle:@"Start Over" target:self action:@selector(startOver:)];
   startOverButton.toolTip = @"Forget what's been heard, for a new piece";
 
   NSStackView* controls = [NSStackView stackViewWithViews:@[
     [NSTextField labelWithString:@"Sa:"], saPopUp, [NSTextField labelWithString:@"Input:"], _inputPopUp,
-    [[NSView alloc] init], startOverButton, recordButton, _listenButton
+    [[NSView alloc] init], startOverButton, annotateButton, recordButton, _listenButton
   ]];
   [controls setCustomSpacing:20 afterView:saPopUp];
   controls.edgeInsets = NSEdgeInsetsMake(8, 12, 8, 12);
@@ -126,7 +130,7 @@ raagasense::RaagLearning LoadLearning() {
   [raagRow.widthAnchor constraintEqualToAnchor:content.widthAnchor].active = YES;
   [_pitchView.widthAnchor constraintEqualToAnchor:content.widthAnchor].active = YES;
 
-  _window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 900, 560)
+  _window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 1040, 560)
                                         styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
                                                   NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable
                                           backing:NSBackingStoreBuffered
@@ -147,15 +151,29 @@ raagasense::RaagLearning LoadLearning() {
   _livePitch->Stop();
 }
 
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication*)sender {
+  return _annotationWindow.window.visible && ![_annotationWindow prepareToClose] ? NSTerminateCancel : NSTerminateNow;
+}
+
 - (void)buildMenu {
   NSMenu* bar = [[NSMenu alloc] init];
   NSMenuItem* appItem = [bar addItemWithTitle:@"" action:nil keyEquivalent:@""];
   NSMenu* appMenu = [[NSMenu alloc] init];
   [appMenu addItemWithTitle:@"Start Over" action:@selector(startOver:) keyEquivalent:@"k"];
   [appMenu addItemWithTitle:@"Record Sample…" action:@selector(recordSample:) keyEquivalent:@"r"];
+  [appMenu addItemWithTitle:@"Label & Review Recordings…" action:@selector(annotateRecordings:) keyEquivalent:@"o"];
   [appMenu addItem:[NSMenuItem separatorItem]];
   [appMenu addItemWithTitle:@"Quit RaagaSense" action:@selector(terminate:) keyEquivalent:@"q"];
   appItem.submenu = appMenu;
+  NSMenuItem* editItem = [bar addItemWithTitle:@"Edit" action:nil keyEquivalent:@""];
+  NSMenu* editMenu = [[NSMenu alloc] initWithTitle:@"Edit"];
+  [editMenu addItemWithTitle:@"Undo" action:NSSelectorFromString(@"undo:") keyEquivalent:@"z"];
+  [editMenu addItem:[NSMenuItem separatorItem]];
+  [editMenu addItemWithTitle:@"Cut" action:@selector(cut:) keyEquivalent:@"x"];
+  [editMenu addItemWithTitle:@"Copy" action:@selector(copy:) keyEquivalent:@"c"];
+  [editMenu addItemWithTitle:@"Paste" action:@selector(paste:) keyEquivalent:@"v"];
+  [editMenu addItemWithTitle:@"Select All" action:@selector(selectAll:) keyEquivalent:@"a"];
+  editItem.submenu = editMenu;
   NSApp.mainMenu = bar;
 }
 
@@ -300,6 +318,16 @@ raagasense::RaagLearning LoadLearning() {
   [_sampleRecorder showWindow:nil];
 }
 
+- (void)annotateRecordings:(id)sender {
+  if (!_annotationWindow) _annotationWindow = [[RSAnnotationWindow alloc] init];
+  [_annotationWindow showWindow:nil];
+}
+
+- (void)annotateFolder:(NSString*)folder {
+  [self annotateRecordings:nil];
+  [_annotationWindow openFolder:folder];
+}
+
 - (void)ensureListening:(void (^)(NSString* error))done {
   if (_livePitch->running()) {
     done(nil);
@@ -316,10 +344,17 @@ raagasense::RaagLearning LoadLearning() {
 
 int main(int argc, const char* argv[]) {
   @autoreleasepool {
+    if (const char* folder = std::getenv("BUILD_WORKING_DIRECTORY"))
+      [NSFileManager.defaultManager changeCurrentDirectoryPath:@(folder)];
     NSApplication* app = [NSApplication sharedApplication];
     RSAppDelegate* delegate = [[RSAppDelegate alloc] init];
     app.delegate = delegate;
     app.activationPolicy = NSApplicationActivationPolicyRegular;
+    if (argc == 3 && std::string(argv[1]) == "--annotate") {
+      NSString* folder = [[NSString stringWithUTF8String:argv[2]] stringByStandardizingPath];
+      if (![folder isAbsolutePath]) folder = [NSFileManager.defaultManager.currentDirectoryPath stringByAppendingPathComponent:folder];
+      dispatch_async(dispatch_get_main_queue(), ^{ [delegate annotateFolder:folder]; });
+    }
     [app run];
   }
   return 0;

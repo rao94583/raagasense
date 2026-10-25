@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "core/raag.h"
+#include "core/annotation.h"
 #include "core/sa_finder.h"
 #include "core/svara.h"
 
@@ -81,14 +82,6 @@ NSString* Slug(NSString* text) {
   return slug;
 }
 
-NSString* CsvField(NSString* text) {
-  if ([text rangeOfCharacterFromSet:[NSCharacterSet characterSetWithCharactersInString:@",\"\n"]].location ==
-      NSNotFound) {
-    return text;
-  }
-  return [NSString stringWithFormat:@"\"%@\"", [text stringByReplacingOccurrencesOfString:@"\"" withString:@"\"\""]];
-}
-
 // The number for the next recording named base, among these file names: 1 if
 // there's none yet, and otherwise one more than both how many there are and
 // the highest number in their names. A file counts if what follows base is
@@ -118,16 +111,13 @@ int NextNumber(NSArray<NSString*>* names, NSString* base) {
   return count == 0 ? 1 : std::max(count, highest) + 1;
 }
 
-// labels.csv's text with the last column, sa_checked, of the file's row set.
+// Updates by column name, including files extended by the annotation tool.
 NSString* WithChecked(NSString* labels, NSString* file, BOOL checked) {
-  NSMutableArray<NSString*>* lines = [[labels componentsSeparatedByString:@"\n"] mutableCopy];
-  NSString* prefix = [CsvField(file) stringByAppendingString:@","];
-  for (NSUInteger i = 0; i < lines.count; ++i) {
-    if (![lines[i] hasPrefix:prefix]) continue;
-    const NSRange comma = [lines[i] rangeOfString:@"," options:NSBackwardsSearch];
-    lines[i] = [[lines[i] substringToIndex:comma.location + 1] stringByAppendingString:checked ? @"yes" : @"no"];
-  }
-  return [lines componentsJoinedByString:@"\n"];
+  std::string error;
+  auto table = raagasense::annotation::Labels::Parse(labels.UTF8String, &error);
+  if (!table) return nil;
+  auto row = table->Get(file.UTF8String); row.sa_checked = checked;
+  return table->Set(row, &error) ? @(table->Text().c_str()) : nil;
 }
 
 NSString* MinutesAndSeconds(double seconds) {
@@ -468,8 +458,9 @@ NSString* MinutesAndSeconds(double seconds) {
   NSString* text = [NSString stringWithContentsOfFile:labels encoding:NSUTF8StringEncoding error:nil];
   if (!text) return;
   NSError* error = nil;
-  if (![WithChecked(text, name, checked) writeToFile:labels atomically:YES encoding:NSUTF8StringEncoding error:&error]) {
-    [self showError:error.localizedDescription];
+  NSString* changed = WithChecked(text, name, checked);
+  if (!changed || ![changed writeToFile:labels atomically:YES encoding:NSUTF8StringEncoding error:&error]) {
+    [self showError:error.localizedDescription ?: @"Could not update labels.csv; the original labels were retained."];
   }
 }
 
@@ -621,19 +612,20 @@ NSString* MinutesAndSeconds(double seconds) {
   }
   if (artist.length > 0) [notes appendFormat:@"; artist %@", _artistField.stringValue];
   NSString* labels = [self.folder stringByAppendingPathComponent:@"labels.csv"];
-  NSMutableString* row = [NSMutableString string];
-  if (![files fileExistsAtPath:labels]) [row appendString:@"file,raag,sa_hz,singer,notes,sa_checked\n"];
   const double sa = status.held_seconds >= kShowSaAfter ? status.sa : 0;
   const BOOL checked = sa > 0 && _checkedBox.state == NSControlStateValueOn;
-  [row appendFormat:@"%@,%@,%.1f,%@,%@,%@\n", CsvField(name), CsvField(@(_raag.name.c_str())), sa,
-                    CsvField(performer), CsvField(notes), checked ? @"yes" : @"no"];
-  NSFileHandle* handle = [NSFileHandle fileHandleForWritingAtPath:labels];
-  if (handle) {
-    [handle seekToEndOfFile];
-    [handle writeData:[row dataUsingEncoding:NSUTF8StringEncoding]];
-    [handle closeFile];
-  } else {
-    [row writeToFile:labels atomically:YES encoding:NSUTF8StringEncoding error:nil];
+  NSString* previous = @"";
+  if ([files fileExistsAtPath:labels]) previous = [NSString stringWithContentsOfFile:labels encoding:NSUTF8StringEncoding error:&error];
+  std::string parseError;
+  auto table = previous ? raagasense::annotation::Labels::Parse(previous.UTF8String, &parseError) : std::nullopt;
+  raagasense::annotation::Label row;
+  row.file = name.UTF8String; row.raag = _raag.name; row.performer = performer.UTF8String;
+  row.artist = _artistField.stringValue.UTF8String; row.sa = sa; row.sa_checked = checked; row.notes = notes.UTF8String;
+  if (!table || !table->Set(row, &parseError) ||
+      ![@(table->Text().c_str()) writeToFile:labels atomically:YES encoding:NSUTF8StringEncoding error:&error]) {
+    [self showError:[NSString stringWithFormat:@"Audio was saved as %@, but labels could not be saved: %@", name,
+        error.localizedDescription ?: @(parseError.c_str())]];
+    return;
   }
 
   _savedName = sa > 0 ? name : nil;

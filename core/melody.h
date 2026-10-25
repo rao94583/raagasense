@@ -1,12 +1,13 @@
 // Tracks the predominant pitch, the melody, in music with accompaniment: a
 // harmonic-summation pitch salience in the manner of Salamon and Gómez (2012),
 // simplified. Each spectral peak votes for every fundamental it could be a
-// harmonic of, and the most-voted fundamental wins. Unlike YIN it doesn't need
-// the frame to be periodic, so a tanpura or harmonium under the voice doesn't
-// stop it finding the voice. Before voting, percussion such as tabla is
-// suppressed by harmonic/percussive median filtering (Fitzgerald 2010): a
-// spectral bin counts in proportion to how much steadier it is over time than
-// across frequency.
+// harmonic of. Experimental temporal selection follows several competing
+// fundamentals with bounded lookahead, so brief accompaniment changes need
+// not interrupt a melodic contour. This does not separate lead from accompaniment or
+// reliably distinguish a sustained voice from a drone. Before voting,
+// percussion is suppressed by harmonic/percussive median filtering
+// (Fitzgerald 2010): a spectral bin counts in proportion to how much steadier
+// it is over time than across frequency.
 #pragma once
 
 #include <cstdint>
@@ -43,18 +44,24 @@ struct MelodyOptions {
   // reference_seconds.
   double voicing = 0.2;
   double reference_seconds = 10;
+  // Additional lookahead in hops for experimental temporal melody selection.
+  // At the default 10 ms hop, 15 adds 150 ms to the percussion filter's
+  // latency. 0 retains independent strongest-peak selection. Keep opt-in:
+  // the current prototype helps synthetic mixtures and fixed-Sa recognition,
+  // but regresses automatic-Sa recognition on the local diagnostic corpus.
+  int tracking_frames = 0;
 };
 
 // Estimates the melody's pitch over a stream of samples pushed in arbitrary
 // chunks. A frame's confidence is 0.5 at the voicing threshold and reaches 1
-// at twice it, so that frames below 0.5 can be treated as unvoiced, as with
-// YIN's.
+// at twice it. Temporal selection includes an unvoiced state and can reject
+// isolated pitches even when their salience exceeds the threshold.
 class MelodyTracker {
  public:
   explicit MelodyTracker(const MelodyOptions& options);
 
   // Appends samples, and appends a frame to *out for every hop that's ready:
-  // all but the last percussion_frames / 2 completed.
+  // all but the last percussion_frames / 2 + tracking_frames completed.
   void Push(std::span<const float> samples, std::vector<PitchFrame>* out);
   // Appends the frames still held back, at the end of the stream.
   void Finish(std::vector<PitchFrame>* out);
@@ -67,13 +74,27 @@ class MelodyTracker {
     std::vector<double> magnitude;
   };
 
+  struct Candidate {
+    double frequency;
+    double salience;
+  };
+  struct Observation {
+    double time;
+    double threshold;
+    // In decreasing salience order; state 0 is the implicit unvoiced state.
+    std::vector<Candidate> candidates;
+  };
+
   // The magnitude spectrum of the frame at pending_[offset], up to the
   // highest bin that can vote.
   std::vector<double> Magnitude(size_t offset);
-  // The best fundamental's frequency and salience in a magnitude spectrum.
-  std::pair<double, double> Salience(const std::vector<double>& magnitude) const;
+  // Competing local maxima of fundamental-frequency salience.
+  std::vector<Candidate> Candidates(const std::vector<double>& magnitude) const;
   // Emits the frames whose later neighbors have arrived, or all of them.
   void Emit(bool all, std::vector<PitchFrame>* out);
+  // Finds the best path through the pending observations and commits its
+  // oldest state. Future observations can affect only uncommitted frames.
+  void Select(bool all, std::vector<PitchFrame>* out);
 
   MelodyOptions options_;
   int hop_size_;
@@ -87,6 +108,8 @@ class MelodyTracker {
   size_t next_ = 0;
   // Recent frames' salience, for the voicing reference.
   std::deque<double> recent_;
+  std::deque<Observation> observations_;
+  double previous_frequency_ = 0;
 };
 
 }  // namespace raagasense

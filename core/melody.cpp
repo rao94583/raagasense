@@ -16,6 +16,17 @@ constexpr double kVoteCents = 50;
 // Spectral peaks outside this range don't vote.
 constexpr double kMinPeakHz = 55;
 constexpr double kMaxPeakHz = 5000;
+constexpr size_t kMaxCandidates = 8;
+constexpr double kCandidateFloor = 0.15;
+// Log-salience cost per semitone. This favors continuity without forbidding
+// real leaps; sustained evidence can overcome any single transition cost.
+constexpr double kContinuityCost = 0.4;
+constexpr double kVoicingSwitchCost = 0.3;
+
+double TransitionCost(double from, double to) {
+  if (from <= 0 || to <= 0) return from == to ? 0 : kVoicingSwitchCost;
+  return kContinuityCost * std::abs(12 * std::log2(to / from));
+}
 
 // An in-place radix-2 FFT; data.size() must be a power of two.
 void Fft(std::vector<std::complex<double>>& data) {
@@ -62,11 +73,11 @@ std::vector<double> MelodyTracker::Magnitude(size_t offset) {
   return magnitude;
 }
 
-std::pair<double, double> MelodyTracker::Salience(const std::vector<double>& magnitude) const {
+std::vector<MelodyTracker::Candidate> MelodyTracker::Candidates(const std::vector<double>& magnitude) const {
   const int n = options_.frame_size;
   const double rate = options_.sample_rate;
   const double loudest = *std::max_element(magnitude.begin(), magnitude.end());
-  if (loudest <= 0) return {0, 0};
+  if (loudest <= 0) return {};
   const double floor = loudest * std::pow(10, options_.peak_floor_db / 20);
 
   const int bins = static_cast<int>(1200 * std::log2(options_.max_frequency / options_.min_frequency) / kBinCents) + 1;
@@ -95,15 +106,79 @@ std::pair<double, double> MelodyTracker::Salience(const std::vector<double>& mag
     }
   }
 
-  const int best = static_cast<int>(std::max_element(salience.begin(), salience.end()) - salience.begin());
-  if (salience[best] <= 0) return {0, 0};
-  double refined = best;
-  if (best > 0 && best < bins - 1) {
-    const double a = salience[best - 1], b = salience[best], c = salience[best + 1];
-    const double curvature = a - 2 * b + c;
-    if (curvature < 0) refined += 0.5 * (a - c) / curvature;
+  const double highest = *std::max_element(salience.begin(), salience.end());
+  if (highest <= 0) return {};
+  std::vector<Candidate> candidates;
+  for (int bin = 0; bin < bins; ++bin) {
+    if (salience[bin] < kCandidateFloor * highest || (bin > 0 && salience[bin] <= salience[bin - 1]) ||
+        (bin + 1 < bins && salience[bin] < salience[bin + 1])) continue;
+    double refined = bin;
+    if (bin > 0 && bin + 1 < bins) {
+      const double a = salience[bin - 1], b = salience[bin], c = salience[bin + 1];
+      const double curvature = a - 2 * b + c;
+      if (curvature < 0) refined += 0.5 * (a - c) / curvature;
+    }
+    candidates.push_back({options_.min_frequency * std::exp2(refined * kBinCents / 1200), salience[bin]});
   }
-  return {options_.min_frequency * std::exp2(refined * kBinCents / 1200), salience[best]};
+  std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
+    return a.salience != b.salience ? a.salience > b.salience : a.frequency < b.frequency;
+  });
+  if (candidates.size() > kMaxCandidates) candidates.resize(kMaxCandidates);
+  return candidates;
+}
+
+void MelodyTracker::Select(bool all, std::vector<PitchFrame>* out) {
+  const size_t lookahead = static_cast<size_t>(std::max(0, options_.tracking_frames));
+  while (!observations_.empty() && (all || observations_.size() > lookahead)) {
+    const auto& oldest = observations_.front();
+    size_t chosen = 0;
+    if (lookahead == 0) {
+      chosen = oldest.candidates.empty() ? 0 : 1;
+    } else {
+      // Viterbi over a small fixed-lag window, anchored to the last committed
+      // state. State 0 is unvoiced; the other states are salience peaks.
+      std::vector<std::vector<size_t>> back(observations_.size());
+      std::vector<double> scores;
+      for (size_t t = 0; t < observations_.size(); ++t) {
+        const auto& here = observations_[t];
+        const auto frequency = [&](size_t state) { return state == 0 ? 0.0 : here.candidates[state - 1].frequency; };
+        std::vector<double> next(here.candidates.size() + 1);
+        back[t].resize(next.size());
+        for (size_t state = 0; state < next.size(); ++state) {
+          double best = -TransitionCost(previous_frequency_, frequency(state));
+          if (t > 0) {
+            best = -INFINITY;
+            const auto& prior = observations_[t - 1];
+            for (size_t from = 0; from < scores.size(); ++from) {
+              const double hz = from == 0 ? 0.0 : prior.candidates[from - 1].frequency;
+              const double value = scores[from] - TransitionCost(hz, frequency(state));
+              if (value > best) {
+                best = value;
+                back[t][state] = from;
+              }
+            }
+          }
+          const double emission = state == 0 || here.threshold <= 0
+                                      ? 0 : std::log(here.candidates[state - 1].salience / here.threshold);
+          next[state] = best + emission;
+        }
+        scores = std::move(next);
+      }
+      chosen = static_cast<size_t>(std::max_element(scores.begin(), scores.end()) - scores.begin());
+      for (size_t t = observations_.size() - 1; t > 0; --t) chosen = back[t][chosen];
+    }
+    PitchFrame frame;
+    frame.time = oldest.time;
+    if (chosen > 0 && oldest.threshold > 0) {
+      const auto& candidate = oldest.candidates[chosen - 1];
+      frame.confidence = std::min(1.0, 0.5 * candidate.salience / oldest.threshold);
+      frame.voiced = candidate.salience >= oldest.threshold;
+      frame.frequency = frame.voiced ? candidate.frequency : 0;
+    }
+    previous_frequency_ = frame.frequency;
+    out->push_back(frame);
+    observations_.pop_front();
+  }
 }
 
 void MelodyTracker::Emit(bool all, std::vector<PitchFrame>* out) {
@@ -133,7 +208,8 @@ void MelodyTracker::Emit(bool all, std::vector<PitchFrame>* out) {
         magnitude[k] = h + p > 0 ? here[k] * h / (h + p) : 0;
       }
     }
-    const auto [frequency, salience] = Salience(magnitude);
+    auto candidates = Candidates(magnitude);
+    const double salience = candidates.empty() ? 0 : candidates[0].salience;
 
     recent_.push_back(salience);
     if (recent_.size() > keep) recent_.pop_front();
@@ -142,18 +218,15 @@ void MelodyTracker::Emit(bool all, std::vector<PitchFrame>* out) {
     std::nth_element(sorted.begin(), percentile, sorted.end());
     const double threshold = options_.voicing * *percentile;
 
-    PitchFrame frame;
-    frame.time = spectra_[next_].time;
-    frame.confidence = threshold > 0 ? std::min(1.0, 0.5 * salience / threshold) : 0;
-    frame.voiced = threshold > 0 && salience >= threshold;
-    frame.frequency = frame.voiced ? frequency : 0;
-    out->push_back(frame);
+    observations_.push_back({spectra_[next_].time, threshold, std::move(candidates)});
+    Select(false, out);
     ++next_;
     while (next_ > half) {
       spectra_.pop_front();
       --next_;
     }
   }
+  if (all) Select(true, out);
 }
 
 void MelodyTracker::Push(std::span<const float> samples, std::vector<PitchFrame>* out) {

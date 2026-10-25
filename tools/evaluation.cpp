@@ -1,9 +1,11 @@
 #include "tools/evaluation.h"
+#include "core/annotation.h"
 
 #include <algorithm>
 #include <cerrno>
 #include <cmath>
 #include <cstdlib>
+#include <sstream>
 
 namespace raagasense::evaluation {
 namespace {
@@ -25,33 +27,11 @@ std::string Field(const std::vector<std::string>& fields, size_t column) {
 }  // namespace
 
 std::vector<std::string> CsvFields(std::string_view line) {
-  if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
-  std::vector<std::string> fields(1);
-  bool quoted = false;
-  for (size_t i = 0; i < line.size(); ++i) {
-    const char c = line[i];
-    if (c == '"') {
-      if (quoted && i + 1 < line.size() && line[i + 1] == '"') {
-        fields.back() += '"';
-        ++i;
-      } else {
-        quoted = !quoted;
-      }
-    } else if (c == ',' && !quoted) {
-      fields.emplace_back();
-    } else {
-      fields.back() += c;
-    }
-  }
-  return quoted ? std::vector<std::string>{} : fields;
+  return annotation::CsvFields(line);
 }
 
 bool Number(std::string_view text, double* value) {
-  const std::string trimmed = Trim(text);
-  char* end = nullptr;
-  errno = 0;
-  *value = std::strtod(trimmed.c_str(), &end);
-  return !trimmed.empty() && end == trimmed.c_str() + trimmed.size() && errno != ERANGE && std::isfinite(*value);
+  return annotation::Number(text, value);
 }
 
 bool ReadLabels(std::istream& in, bool all_sa, std::vector<Label>* labels, std::string* error) {
@@ -77,12 +57,38 @@ bool ReadLabels(std::istream& in, bool all_sa, std::vector<Label>* labels, std::
       return false;
     }
     if (!all_sa && checked < header.size() && Field(fields, checked) != "yes") label.sa = 0;
-    if (label.artist.empty()) {
-      const std::string text = Field(fields, notes);
-      const size_t at = text.find("artist ");
-      if (at != std::string::npos) label.artist = Trim(text.substr(at + 7, text.find(';', at) - at - 7));
-    }
+    if (artist == header.size()) label.artist = annotation::ArtistFromNotes(Field(fields, notes));
     labels->push_back(std::move(label));
+  }
+  return true;
+}
+
+bool ReadSaragaPitch(std::istream& in, std::vector<PitchFrame>* frames,
+                     std::string* error, double end_time) {
+  frames->clear();
+  std::string line;
+  size_t row = 0;
+  while (std::getline(in, line)) {
+    ++row;
+    if (Trim(line).empty()) continue;
+    std::istringstream fields(line);
+    std::string time, frequency, extra;
+    PitchFrame frame;
+    if (!(fields >> time >> frequency) || (fields >> extra) ||
+        !Number(time, &frame.time) || !Number(frequency, &frame.frequency) ||
+        frame.time < 0 || frame.frequency < 0 ||
+        (!frames->empty() && frame.time <= frames->back().time)) {
+      *error = "invalid Saraga pitch frame at line " + std::to_string(row);
+      return false;
+    }
+    if (end_time > 0 && frame.time >= end_time) break;
+    frame.voiced = frame.frequency > 0;
+    frame.confidence = 1;
+    frames->push_back(frame);
+  }
+  if (in.bad() || frames->empty()) {
+    *error = in.bad() ? "error reading Saraga pitch file" : "no Saraga pitch frames in the requested interval";
+    return false;
   }
   return true;
 }

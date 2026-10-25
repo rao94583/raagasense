@@ -5,6 +5,7 @@
 #include <string>
 
 #include "core/raag_phrases.h"
+#include "core/phrase.h"
 #include "core/svara.h"
 #include "gtest/gtest.h"
 
@@ -30,6 +31,9 @@ TEST(Raags, WellFormed) {
     for (int svara : raag.ascent) EXPECT_TRUE(uses(svara)) << raag.name << ": ascent";
     for (int svara : raag.descent) EXPECT_TRUE(uses(svara)) << raag.name << ": descent";
     if (raag.samvadi >= 0) EXPECT_TRUE(uses(raag.samvadi)) << raag.name << ": samvadi";
+    for (const auto& phrase : raag.phrases) {
+      for (int pitch : phrase) EXPECT_TRUE(uses((pitch % 12 + 12) % 12)) << raag.name << ": contradictory phrase";
+    }
   }
 }
 
@@ -52,11 +56,18 @@ TEST(Raags, Find) {
 }
 
 TEST(Raags, Phrases) {
-  for (const auto& [name, phrases] : RaagPhrases()) EXPECT_NE(FindRaag(name), nullptr) << name;
-  // ".N R G ; .N R M G ; ..." from tanarang, octaves dropped.
+  for (const auto& [name, phrases] : RaagPhrases()) {
+    EXPECT_NE(FindRaag(name), nullptr) << name;
+    for (const auto& phrase : phrases) EXPECT_FALSE(ParsePhrase(phrase).empty()) << name << ": " << phrase;
+  }
+  // ".N R G ; .N R M G ; ..." from tanarang, with the lower Ni preserved.
   const std::vector<std::vector<int>>& yaman = FindRaag("Yaman")->phrases;
   ASSERT_FALSE(yaman.empty());
-  EXPECT_EQ(yaman[0], (std::vector<int>{kNi, kRe, kGa}));
+  EXPECT_EQ(yaman[0], (std::vector<int>{-1, kRe, kGa}));
+  EXPECT_EQ(FindRaag("Bhairav")->phrases[0], (std::vector<int>{kKomalRe, kKomalRe, kSa}));
+  const auto& imported = FindRaag("Yaman")->phrases;
+  const auto unrelated = ParsePhrase("r m r n");
+  EXPECT_EQ(std::find(imported.begin(), imported.end(), unrelated), imported.end());
   EXPECT_FALSE(FindRaag("Abhogi")->phrases.empty());  // listed by its alias, Abhogi Kanada
 }
 

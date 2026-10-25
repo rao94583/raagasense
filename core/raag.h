@@ -3,7 +3,7 @@
 // whether it's seldom performed. The list covers the raags of the NCPA's
 // AUTRIM project (autrimncpa.wordpress.com) and common ones from tanarang.com,
 // whose notes on each raag were checked for the svaras, and a few more;
-// characteristic phrases come later.
+// characteristic phrases retain octave contour and repeated notes.
 #pragma once
 
 #include <span>
@@ -35,8 +35,10 @@ struct Raag {
   std::vector<int> descent;
   // Seldom performed, so less likely to be what's playing.
   bool rare = false;
-  // Characteristic phrases (RaagPhrases) as svaras, repeats collapsed and
-  // octaves left out; only those of three svaras or more.
+  // Characteristic phrases as signed semitones from Sa (.N = -1, S' = 12),
+  // preserving repetitions. Only those of three events or more, consistent
+  // with this catalog entry's svaras; contradictory source templates are
+  // kept in RaagPhrases for audit and excluded here.
   std::vector<std::vector<int>> phrases;
 };
 

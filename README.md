@@ -9,6 +9,7 @@ raaga matching are all conventional signal processing and rules.
 ```sh
 bazel test //...
 bazel run //app/macos:RaagaSense                             # Record Sample… (⌘R) collects labeled samples
+bazel run //app/macos:RaagaSense -- --annotate recordings    # Label performers; optionally review short pitch excerpts
 bazel run //tools:analyze -- recording.mp3                   # svara histogram
 bazel run //tools:analyze -- --steady recording.mp3          # ...of steady notes only
 bazel run //tools:analyze -- --notes recording.mp3           # steady notes, one per line
@@ -16,8 +17,8 @@ bazel run //tools:analyze -- --tonic recording.mp3           # candidates for Sa
 bazel run //tools:analyze -- --tonic --svaras "S g m d n" recording.mp3  # ...knowing the raag
 bazel run //tools:analyze -- --csv recording.mp3             # per-frame pitch
 bazel run //tools:plot -- recording.mp3 out.png              # pitch over svara grid
-bazel run //tools:evaluate -- recordings ~/Music/RaagaSense\ Samples  # check against labeled folders
-bazel run //tools:evaluate -- --seconds 30 recordings         # compare auto and labeled Sa on 30 s prefixes
+bazel run //tools:evaluate -- --seconds 120 --all-sa         # primary Saraga corpus after import (automatic Sa references)
+bazel run //tools:evaluate -- recordings ~/Music/RaagaSense\ Samples  # explicitly evaluate older samples
 bazel run //tools:evaluate -- --all-sa --learn-to ~/Music/RaagaSense\ Samples/learned.csv \
     recordings ~/Music/RaagaSense\ Samples                   # ...and save what's learned for the app
 bazel run //tools:record -- --list                           # sound inputs
@@ -28,6 +29,103 @@ The analyze and plot tools estimate Sa from the recording; `--sa HZ` sets
 it instead. In the app, choosing Sa fixes it for both the pitch grid and
 raag identification; Auto estimates it while ranking raags.
 
+## Primary corpus: Saraga Hindustani
+
+Saraga Hindustani 1.5 is now the primary development corpus. Import an
+extracted download once (Python 3, standard library only):
+
+```sh
+mkdir -p data
+bazel run //tools:raag_catalog > data/raag-catalog.tsv
+python3 tools/import_saraga.py /path/to/saraga1.5_hindustani --catalog data/raag-catalog.tsv
+```
+
+The importer links to the original media and annotations, preserving all
+108 recordings in `data/saraga/collection`. The evaluation view in
+`data/saraga/recordings` contains 89 recordings of 51 supported raags by
+11 artists. When raag metadata is missing, the importer trusts a raag
+named in the recording title and records `raag_source=title`. This recovers
+ten labels, nine of which are usable in evaluation. Poorva is mapped to
+Puriya Kalyan by project decision, with the original label and mapping
+recorded in the import. Sawani is explicitly excluded from evaluation.
+Missing labels, unsupported raags, and explicit exclusions are listed in
+`data/saraga/excluded.csv`; they remain available in the full collection.
+`manifest.json` preserves source identifiers, label mappings, artist
+provenance, and the import summary. Generated data is excluded from Git;
+keep the source volume mounted. Re-import into a new output folder to
+preserve any local label edits.
+
+With no directory argument, `evaluate` uses the imported Saraga evaluation
+view when present, falling back to `recordings` before import. The old
+recordings remain available when explicitly selected.
+
+Saraga's pitch tracks and tonic values are **automatically extracted**;
+they are comparison features, not human-checked ground truth. Imported Sa
+values remain unchecked; `--all-sa` explicitly includes them for provisional
+fixed-Sa comparisons and profile learning. Compare our tracker against
+Saraga's Melodia tracks on the same 120-second prefixes:
+
+```sh
+bazel run //tools:evaluate -- --seconds 120 --all-sa
+bazel run //tools:evaluate -- --seconds 120 --all-sa --pitch-dir data/saraga/pitch --pitch-format saraga
+bazel run //app/macos:RaagaSense -- --annotate data/saraga/recordings
+```
+
+Manual phrase and section annotations are linked under `annotations/` for
+future work. Keep evaluation separated by artist; 27 of the supported
+raags occur under only one artist, so this remains a sparse development
+benchmark. See [the Saraga import and baseline notes](docs/saraga.md) for
+details, attribution, and how the excluded recordings can still help.
+
+## Label recordings without transcribing them
+
+Open **Label & Review…** (⌘O) and choose your recordings folder. Fill in the
+lead performer's name, raag, and Sa if known, then **Save & next recording**.
+Consistent performer names let evaluation keep one artist's recordings
+together. Unknown names can stay blank; original notes and other CSV
+columns are preserved, and the tool makes a backup before its first label
+update. Existing custom raag names are retained. **Hear Sa** plays a quiet
+reference tone to help check the tonic; an automatic suggestion stays
+unverified until you explicitly check it by ear.
+Beside Sa in Hz, the panel shows the nearest concert-pitch note and octave
+plus cents above (+) or below (−) it, using A4 = 440 Hz.
+
+Pitch review is optional. Choose a **5, 10, or 15 second** excerpt, analyze
+it automatically, then compare **Listen**, **Pitch guide**, or **Both**.
+Drag to select a section and correct it with **Up/Down an octave**, **No
+lead**, or **Set held note**. Octave corrections preserve the contour;
+assign a fixed note only when the performer really holds it. Undo and
+Restore estimate are available. Skip uncertain passages instead of guessing.
+
+Only tick **I listened through this whole excerpt and checked the pitch
+guide** after reviewing the entire excerpt, including gaps and moving
+notes. The tool then enables export. You do not need to review the rest of
+the recording. New edits clear the check, and the tool asks before discarding
+unexported edits or checked excerpts. It does not save pitch drafts between
+sessions; export the checked passage before leaving, or skip it.
+
+Exports contain a new mono WAV copy, a matching pitch CSV, and labels;
+the original audio is unchanged. In the chosen export folder:
+
+```text
+recordings/<source>__<start-ms>-<end-ms>.wav
+recordings/labels.csv
+corrected-pitch/<same filename>.wav.csv
+```
+
+Times in the pitch CSV start at the excerpt's beginning. Existing exported
+files are not overwritten. Artist and source information follow the
+excerpt; Sa is trusted only when explicitly checked by ear.
+
+```sh
+bazel run //tools:evaluate -- --pitch-dir /path/to/reviewed/corrected-pitch /path/to/reviewed/recordings
+```
+
+Start with performer labels and just a couple of clear 10-second excerpts.
+This supplies useful diagnostics without frame-by-frame transcription.
+Short checked excerpts help assess pitch extraction. Keep the longer source
+recordings for assessing raag identification over a performance.
+
 ## Recognition diagnostics
 
 `evaluate` reports automatic-Sa accuracy on all labeled recordings, and
@@ -36,6 +134,19 @@ Each report includes top-1/top-3 accuracy, per-raag recall, and leading
 confusions. Recordings with no usable notes count as misses. `--seconds N`
 uses the first N seconds (or the whole recording if shorter); omit it to
 evaluate complete recordings.
+
+`--joint-report FILE.jsonl` records every proposed Sa and scored raag–Sa
+pair, the actual winner's Sa, and the reference pair's rank, score gap and
+ties. It distinguishes a missing tonic candidate from a scoring failure;
+the standalone "Sa alone" estimate is not necessarily the winner's Sa.
+Existing reports are not overwritten. See [joint-search diagnostics](docs/joint-search.md).
+
+Characteristic phrases retain octave contour and repeated notes. Matches
+are discounted for inserted notes and checked against shuffled versions of
+the current note sequence, so phrase scoring works without `learned.csv`.
+`evaluate --no-phrases` disables this evidence for comparison. Existing
+learned pitch profiles still load; legacy phrase-chance rows are ignored.
+See [phrase scoring and its diagnostic results](docs/phrase-scoring.md).
 
 Folders can contain `labels.csv` with required `file,raag,sa_hz` columns.
 Sa 0 means unknown. If `sa_checked` exists, only `yes` admits a tonic label;
@@ -74,6 +185,19 @@ separate tonic errors from melody extraction and raag-model limitations.
 Keep a separate test set for final accuracy estimates; do not select
 scoring weights on it.
 
+Temporal melody selection is available experimentally in `analyze` and
+`evaluate` with `--temporal`. It keeps competing pitch peaks and commits a
+path with 150 ms of lookahead. The app and tools retain framewise selection
+by default: the prototype improves some synthetic mixtures and fixed-Sa
+results but regresses automatic-Sa accuracy on the local recordings. See
+[the comparison and limitations](docs/melody-tracking.md).
+
+```sh
+bazel run //tools:evaluate -- --seconds 120 recordings
+bazel run //tools:evaluate -- --temporal --seconds 120 recordings
+bazel run //tools:analyze -- --temporal --sa 220 --csv recording.mp3
+```
+
 ## Layout
 
 | Directory | Contents | Depends on |
@@ -101,7 +225,7 @@ session, and the plot draws into any Core Graphics context).
 - [x] Svaras of 122 raags (the NCPA AUTRIM list, common raags from tanarang.com, and more; 28 marked rare), and Sa from a known raag
 - [x] Naming the raag from held notes: svaras, occasional svaras, vadi
 - [x] Svaras left out going up or down (39 raags so far)
-- [x] Characteristic phrases (tanarang.com's, for 105 raags), scored above chance
+- [x] Characteristic phrases from tanarang.com, with octave contour and an excerpt-specific chance correction
 - [x] Raag profiles learned from labeled recordings
 - [ ] Learned movement between svaras, without favoring raags that have recordings
 - [x] Live raag guesses and an Auto Sa in the app, from `learned.csv`

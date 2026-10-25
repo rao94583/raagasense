@@ -30,10 +30,11 @@ void Mix(std::vector<float>* into, const std::vector<float>& other, double gain)
   for (size_t i = 0; i < into->size() && i < other.size(); ++i) (*into)[i] += static_cast<float>(gain * other[i]);
 }
 
-std::vector<PitchFrame> Track(const std::vector<float>& samples, int percussion_frames = 17) {
+std::vector<PitchFrame> Track(const std::vector<float>& samples, int percussion_frames = 17, int tracking_frames = 15) {
   MelodyOptions options;
   options.sample_rate = kRate;
   options.percussion_frames = percussion_frames;
+  options.tracking_frames = tracking_frames;
   MelodyTracker tracker(options);
   std::vector<PitchFrame> frames;
   tracker.Push(samples, &frames);
@@ -101,9 +102,12 @@ std::vector<float> Strokes(double seconds) {
 TEST(MelodyTracker, VoiceOverTabla) {
   std::vector<float> mix = Tone(233.08, kVoice, 2);
   Mix(&mix, Strokes(2), 1);
-  const double with = ShareOn(Track(mix), 233.08), without = ShareOn(Track(mix, 0), 233.08);
+  // Isolate the percussion mask's contribution using the framewise mode;
+  // temporal tracking can reject these strokes even without the mask.
+  const double with = ShareOn(Track(mix, 17, 0), 233.08), without = ShareOn(Track(mix, 0, 0), 233.08);
   EXPECT_GT(with, 0.9);
   EXPECT_GT(with, without + 0.05);
+  EXPECT_GT(ShareOn(Track(mix), 233.08), 0.95);
 }
 
 TEST(MelodyTracker, SilenceIsUnvoiced) {
@@ -123,10 +127,122 @@ TEST(MelodyTracker, FaintAfterLoudIsUnvoiced) {
   }
 }
 
+TEST(MelodyTracker, BriefAccompanimentSurgeDoesNotReplaceTheLead) {
+  auto mix = Tone(233.08, kVoice, 2);
+  auto accompaniment = Tone(293.66, kVoice, 2);
+  for (size_t i = 0; i < accompaniment.size(); ++i) {
+    const double time = i / kRate;
+    accompaniment[i] *= time > 0.85 && time < 0.91 ? 1.8f : 0.5f;
+  }
+  Mix(&mix, accompaniment, 1);
+  const double temporal = ShareOn(Track(mix), 233.08);
+  const double framewise = ShareOn(Track(mix, 17, 0), 233.08);
+  EXPECT_GT(temporal, 0.97);
+  EXPECT_GT(temporal, framewise + 0.01);
+}
+
+TEST(MelodyTracker, SustainedOctaveLeapIsPreserved) {
+  auto samples = Tone(220, kVoice, 1);
+  const auto high = Tone(440, kVoice, 1);
+  samples.insert(samples.end(), high.begin(), high.end());
+  const auto frames = Track(samples);
+  for (const auto& frame : frames) {
+    if (frame.time < 0.9 || frame.time > 1.1) {
+      ASSERT_TRUE(frame.voiced);
+      EXPECT_NEAR(CentsFromSa(frame.frequency, frame.time < 1 ? 220 : 440), 0, 10) << frame.time;
+    }
+  }
+}
+
+TEST(MelodyTracker, FastNoteChangesArePreserved) {
+  // A short taan-like sequence, with notes every 100 ms. Check their centers
+  // rather than the FFT windows that overlap the note boundaries.
+  const std::vector<double> frequencies = {220, 246.94, 277.18, 329.63, 293.66, 246.94, 220};
+  std::vector<float> samples;
+  for (double frequency : frequencies) {
+    auto note = Tone(frequency, kVoice, 0.1);
+    samples.insert(samples.end(), note.begin(), note.end());
+  }
+  for (const auto& frame : Track(samples)) {
+    const size_t note = static_cast<size_t>(frame.time / 0.1);
+    const double within = std::fmod(frame.time, 0.1);
+    if (note >= frequencies.size() || within < 0.04 || within > 0.06) continue;
+    EXPECT_TRUE(frame.voiced);
+    EXPECT_NEAR(CentsFromSa(frame.frequency, frequencies[note]), 0, 20) << frame.time;
+  }
+}
+
+TEST(MelodyTracker, LookaheadIsBoundedAndFinishFlushesExactlyOnce) {
+  const auto samples = Tone(220, kVoice, 1);
+  MelodyOptions options;
+  options.tracking_frames = 15;
+  MelodyTracker tracker(options);
+  std::vector<PitchFrame> frames;
+  tracker.Push(samples, &frames);
+  const size_t total = (samples.size() - options.frame_size) / (static_cast<int>(kRate / 100)) + 1;
+  const size_t latency = options.percussion_frames / 2 + options.tracking_frames;
+  ASSERT_EQ(frames.size(), total - latency);
+  const auto prefix = frames;
+  tracker.Finish(&frames);
+  ASSERT_EQ(frames.size(), total);
+  for (size_t i = 0; i < prefix.size(); ++i) {
+    EXPECT_DOUBLE_EQ(frames[i].frequency, prefix[i].frequency);
+    EXPECT_DOUBLE_EQ(frames[i].time, prefix[i].time);
+  }
+  tracker.Finish(&frames);
+  EXPECT_EQ(frames.size(), total);
+}
+
+TEST(MelodyTracker, TracksMeendAndAndolanOverDrone) {
+  constexpr double seconds = 3;
+  auto pitch = [](double time) {
+    // A 500-cent meend followed by a broad, slow oscillation.
+    const double cents = time < 1.5 ? 500 * time / 1.5 : 500 + 60 * std::sin(2 * std::numbers::pi * 2 * (time - 1.5));
+    return 220 * std::exp2(cents / 1200);
+  };
+  std::vector<float> samples(static_cast<size_t>(seconds * kRate));
+  double phase = 0;
+  for (size_t i = 0; i < samples.size(); ++i) {
+    phase += 2 * std::numbers::pi * pitch(i / kRate) / kRate;
+    for (size_t h = 0; h < kVoice.size(); ++h) samples[i] += 0.2 * kVoice[h] * std::sin((h + 1) * phase);
+  }
+  Mix(&samples, Tone(110, kVoice, seconds), 0.4);
+  const auto frames = Track(samples);
+  int correct = 0, count = 0;
+  for (const auto& frame : frames) {
+    if (frame.time < 0.15 || frame.time > seconds - 0.15) continue;
+    ++count;
+    correct += frame.voiced && std::abs(CentsFromSa(frame.frequency, pitch(frame.time))) < 25;
+  }
+  ASSERT_GT(count, 0);
+  EXPECT_GT(static_cast<double>(correct) / count, 0.9);
+}
+
+TEST(MelodyTracker, SilenceBetweenPhrasesDoesNotBecomeAGlide) {
+  auto samples = Tone(220, kVoice, 0.5);
+  samples.resize(static_cast<size_t>(kRate), 0);
+  const auto high = Tone(440, kVoice, 0.5);
+  samples.insert(samples.end(), high.begin(), high.end());
+  for (const auto& frame : Track(samples)) {
+    if (frame.time > 0.6 && frame.time < 0.9) EXPECT_FALSE(frame.voiced);
+    if (frame.time > 1.1) {
+      EXPECT_TRUE(frame.voiced);
+      EXPECT_NEAR(CentsFromSa(frame.frequency, 440), 0, 10);
+    }
+  }
+}
+
 TEST(MelodyTracker, FramesAtEachHopRegardlessOfChunking) {
-  const std::vector<float> tone = Tone(220, kVoice, 1);
+  auto tone = Tone(233.08, kVoice, 2);
+  auto accompaniment = Tone(293.66, kVoice, 2);
+  for (size_t i = 0; i < accompaniment.size(); ++i) {
+    const double time = i / kRate;
+    accompaniment[i] *= time > 0.85 && time < 0.91 ? 1.8f : 0.5f;
+  }
+  Mix(&tone, accompaniment, 1);
   MelodyOptions options;
   options.sample_rate = kRate;
+  options.tracking_frames = 15;
   MelodyTracker tracker(options);
   std::vector<PitchFrame> frames;
   for (size_t at = 0; at < tone.size(); at += 1000) {

@@ -3,6 +3,9 @@
 #import <AudioToolbox/AudioToolbox.h>
 #import <Foundation/Foundation.h>
 
+#include <algorithm>
+#include <cmath>
+
 namespace raagasense {
 
 namespace {
@@ -13,7 +16,11 @@ std::string StatusText(const char* what, OSStatus status) {
 
 }  // namespace
 
-std::optional<AudioData> ReadAudioFile(const std::string& path, std::string* error) {
+std::optional<AudioData> ReadAudioFile(const std::string& path, std::string* error, double max_seconds) {
+  if (!std::isfinite(max_seconds) || max_seconds < 0) {
+    *error = "Audio duration must be finite and nonnegative";
+    return std::nullopt;
+  }
   NSURL* url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:path.c_str()]];
   ExtAudioFileRef file = nullptr;
   OSStatus status = ExtAudioFileOpenURL((__bridge CFURLRef)url, &file);
@@ -54,6 +61,11 @@ std::optional<AudioData> ReadAudioFile(const std::string& path, std::string* err
   std::vector<float> chunk(4096 * channels);
   while (true) {
     UInt32 frames = 4096;
+    if (max_seconds > 0) {
+      const double remaining = std::floor(max_seconds * audio.sample_rate) - audio.samples.size();
+      if (remaining <= 0) break;
+      frames = static_cast<UInt32>(std::min(remaining, 4096.0));
+    }
     AudioBufferList list;
     list.mNumberBuffers = 1;
     list.mBuffers[0] = {channels, static_cast<UInt32>(chunk.size() * sizeof(float)), chunk.data()};

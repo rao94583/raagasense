@@ -50,6 +50,15 @@ TEST(ReadAudioFile, MixesStereoToMono) {
   EXPECT_EQ(audio->sample_rate, 44100);
   ASSERT_EQ(audio->samples.size(), 10000u);
   EXPECT_NEAR(audio->samples[5000], 0.25, 1e-4);
+
+  const auto prefix = ReadAudioFile(path, &error, 0.1);
+  ASSERT_TRUE(prefix) << error;
+  ASSERT_EQ(prefix->samples.size(), 4410u);
+  EXPECT_EQ(prefix->sample_rate, 44100);
+  EXPECT_EQ(prefix->samples, std::vector<float>(audio->samples.begin(), audio->samples.begin() + 4410));
+  const auto longer = ReadAudioFile(path, &error, 1);
+  ASSERT_TRUE(longer) << error;
+  EXPECT_EQ(longer->samples, audio->samples);
 }
 
 TEST(ReadAudioFile, MissingFile) {

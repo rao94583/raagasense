@@ -6,6 +6,7 @@
 #include <sstream>
 
 #include "core/svara.h"
+#include "core/phrase.h"
 #include "core/tonic.h"
 
 namespace raagasense {
@@ -49,14 +50,10 @@ constexpr double kRarePenalty = 0.2;
 // on recorded raags (34 against 20) but worse on the others (13).
 constexpr double kProfilePrior = 2;
 constexpr double kProfileWeight = 1;
-// How much the share of a raag's phrases found beyond chance counts. Leaving
-// each recording's artist out, on 119 labeled recordings, weights of 0.5 to 1
-// name the raag first on 46 or 47 (45 without) and in the top 3 on 73 or 74
-// (66), with no loss on raags no other artist has recorded; 1.5 and up do
-// worse. Matching phrases with no svaras between their svaras, or with up
-// to three, does worse than with up to two.
+// Retain the earlier phrase weight while evaluating the new representation.
+// Background matches now come from the current excerpt, so phrase evidence
+// does not require recordings of other raags and adapts to excerpt length.
 constexpr double kPhraseWeight = 0.5;
-constexpr int kPhraseGap = 2;
 // Passing notes further apart than this, in seconds, aren't in one phrase.
 constexpr double kPhraseSeconds = 0.6;
 // A move between passing notes is up or down when it's at least this many
@@ -70,49 +67,41 @@ struct Shares {
   double held[12] = {};
   double up[12] = {};
   double down[12] = {};
-  // The passing notes as svaras from the Sa, repeats collapsed, with the
-  // number of the phrase each is in.
-  std::vector<int> sequence;
-  std::vector<int> phrase_of;
+  std::map<const Raag*, double> phrase_evidence;
 };
 
-// The passing notes as svaras from a Sa, repeats within a phrase collapsed,
-// and the number of the phrase each is in.
-void Sequence(std::span<const SteadyNote> passing, double sa, std::vector<int>* sequence, std::vector<int>* phrase_of) {
-  int phrase = 0;
-  for (size_t i = 0; i < passing.size(); ++i) {
-    if (i > 0 && passing[i].start - passing[i - 1].end > kPhraseSeconds) ++phrase;
-    const int svara = NearestSvara(CentsFromSa(passing[i].frequency, sa)).svara;
-    if (!sequence->empty() && phrase_of->back() == phrase && sequence->back() == svara) continue;
-    sequence->push_back(svara);
-    phrase_of->push_back(phrase);
-  }
+double PhraseShare(const Raag& raag, std::span<const PhraseEvent> events) {
+  double found = 0;
+  for (const auto& phrase : raag.phrases) found += MatchPhrase(phrase, events);
+  return found / raag.phrases.size();
 }
 
-// Whether a raag's phrase turns up in order in the sequence, within one of
-// its phrases, with up to kPhraseGap other svaras between each of its svaras.
-bool Occurs(const std::vector<int>& phrase, const std::vector<int>& sequence, const std::vector<int>& phrase_of) {
-  for (size_t start = 0; start < sequence.size(); ++start) {
-    if (sequence[start] != phrase[0]) continue;
-    size_t at = start, found = 1;
-    while (found < phrase.size()) {
-      size_t next = at + 1;
-      const size_t limit = std::min(sequence.size(), at + 2 + kPhraseGap);
-      while (next < limit && phrase_of[next] == phrase_of[at] && sequence[next] != phrase[found]) ++next;
-      if (next >= limit || phrase_of[next] != phrase_of[at]) break;
-      at = next;
-      ++found;
-    }
-    if (found == phrase.size()) return true;
+std::map<const Raag*, double> PhraseEvidence(std::span<const SteadyNote> passing, double sa, const Raag* only) {
+  // Bound the live phrase context; old occurrences and random matches must
+  // not accumulate forever during a long concert. Keep cumulative pitch
+  // shares separately, as before.
+  if (!passing.empty()) {
+    const double cutoff = passing.back().end - 120;
+    const auto first = std::lower_bound(passing.begin(), passing.end(), cutoff,
+                                       [](const SteadyNote& note, double time) { return note.end < time; });
+    passing = passing.subspan(static_cast<size_t>(first - passing.begin()));
   }
-  return false;
-}
-
-// The share of the raag's phrases that turn up in the sequence.
-double PhraseShare(const Raag& raag, const std::vector<int>& sequence, const std::vector<int>& phrase_of) {
-  int found = 0;
-  for (const std::vector<int>& phrase : raag.phrases) found += Occurs(phrase, sequence, phrase_of);
-  return static_cast<double>(found) / raag.phrases.size();
+  const auto events = PhraseEvents(passing, sa);
+  if (events.size() < 3) return {};
+  constexpr unsigned kSurrogates = 4;
+  std::vector<std::vector<PhraseEvent>> shuffled;
+  for (unsigned i = 0; i < kSurrogates; ++i) shuffled.push_back(ShuffledPhraseEvents(events, i));
+  std::map<const Raag*, double> evidence;
+  for (const auto& raag : Raags()) {
+    if (raag.phrases.empty() || (only && &raag != only)) continue;
+    const double observed = PhraseShare(raag, events);
+    if (observed <= 0) continue;
+    double chance = 0;
+    for (const auto& surrogate : shuffled) chance += PhraseShare(raag, surrogate) / kSurrogates;
+    // Missing a phrase is not negative evidence in a partial performance.
+    evidence[&raag] = std::max(0.0, observed - chance);
+  }
+  return evidence;
 }
 
 // The model's likelihood for each svara: the raag's svaras, or only those in
@@ -170,19 +159,16 @@ double Score(const Raag& raag, const Shares& shares, double sa_and_pa, const Raa
       score += kProfileWeight * shares.held[svara] * std::log(learned / likely[svara]);
     }
   }
-  if (learning && !raag.phrases.empty()) {
-    const auto chance = learning->phrase_chance.find(&raag);
-    if (chance != learning->phrase_chance.end() && chance->second.recordings > 0) {
-      score += kPhraseWeight * (PhraseShare(raag, shares.sequence, shares.phrase_of) - chance->second.share);
-    }
-  }
+  const auto phrase = shares.phrase_evidence.find(&raag);
+  if (phrase != shares.phrase_evidence.end()) score += kPhraseWeight * phrase->second;
   return score;
 }
 
 // Calls score(candidate, shares) for each candidate Sa.
 template <typename Function>
 void ForEachSa(std::span<const SteadyNote> notes, std::span<const SteadyNote> passing,
-               std::span<const TonicCandidate> candidates, Function score) {
+               std::span<const TonicCandidate> candidates, const IdentifyOptions& options, Function score,
+               const Raag* phrase_raag = nullptr) {
   double total = 0, passing_total = 0;
   for (const SteadyNote& note : notes) total += note.end - note.start;
   for (const SteadyNote& note : passing) passing_total += note.end - note.start;
@@ -204,7 +190,7 @@ void ForEachSa(std::span<const SteadyNote> notes, std::span<const SteadyNote> pa
       if (from >= kMoveCents && to >= kMoveCents) shares.up[svara] += share;
       if (from <= -kMoveCents && to <= -kMoveCents) shares.down[svara] += share;
     }
-    Sequence(passing, candidate.frequency, &shares.sequence, &shares.phrase_of);
+    if (options.use_phrases) shares.phrase_evidence = PhraseEvidence(passing, candidate.frequency, phrase_raag);
     score(candidate, shares);
   }
 }
@@ -212,12 +198,18 @@ void ForEachSa(std::span<const SteadyNote> notes, std::span<const SteadyNote> pa
 bool Better(const RaagMatch& a, const RaagMatch& b) { return a.score > b.score; }
 
 std::vector<RaagMatch> RankRaags(std::span<const SteadyNote> notes, std::span<const SteadyNote> passing,
-                                const RaagLearning* learning, std::span<const TonicCandidate> candidates) {
+                                const RaagLearning* learning, std::span<const TonicCandidate> candidates,
+                                const IdentifyOptions& options, IdentifyTrace* trace = nullptr) {
+  if (trace) {
+    trace->candidates.assign(candidates.begin(), candidates.end());
+    trace->hypotheses.clear();
+  }
   std::vector<RaagMatch> best;
-  ForEachSa(notes, passing, candidates, [&](const TonicCandidate& candidate, const Shares& shares) {
+  ForEachSa(notes, passing, candidates, options, [&](const TonicCandidate& candidate, const Shares& shares) {
     for (const Raag& raag : Raags()) {
       RaagMatch match{&raag, candidate.frequency, 0, 0};
       match.score = Score(raag, shares, candidate.score, learning, &match.foreign_svaras);
+      if (trace) trace->hypotheses.push_back(match);
       auto known = std::find_if(best.begin(), best.end(), [&](const RaagMatch& m) { return m.raag == &raag; });
       if (known == best.end()) {
         best.push_back(match);
@@ -227,6 +219,7 @@ std::vector<RaagMatch> RankRaags(std::span<const SteadyNote> notes, std::span<co
     }
   });
   std::sort(best.begin(), best.end(), Better);
+  if (trace) std::stable_sort(trace->hypotheses.begin(), trace->hypotheses.end(), Better);
   return best;
 }
 
@@ -251,61 +244,52 @@ void AddToProfile(const std::array<double, 12>& held, RaagProfile* profile) {
 }
 
 std::map<const Raag*, double> PhraseShares(std::span<const SteadyNote> passing, double sa) {
-  std::vector<int> sequence, phrase_of;
-  Sequence(passing, sa, &sequence, &phrase_of);
+  const auto events = PhraseEvents(passing, sa);
   std::map<const Raag*, double> shares;
   for (const Raag& raag : Raags()) {
-    if (!raag.phrases.empty()) shares[&raag] = PhraseShare(raag, sequence, phrase_of);
+    if (!raag.phrases.empty()) shares[&raag] = PhraseShare(raag, events);
   }
   return shares;
 }
 
-void Learn(const Raag& raag, const std::array<double, 12>& held, const std::map<const Raag*, double>& phrase_shares,
-           RaagLearning* learning) {
+void Learn(const Raag& raag, const std::array<double, 12>& held, RaagLearning* learning) {
   AddToProfile(held, &learning->profiles[&raag]);
-  for (const auto& [other, share] : phrase_shares) {
-    if (other == &raag) continue;
-    PhraseChance& chance = learning->phrase_chance[other];
-    chance.share = (chance.share * chance.recordings + share) / (chance.recordings + 1);
-    ++chance.recordings;
-  }
 }
 
 std::vector<RaagMatch> IdentifyRaag(std::span<const SteadyNote> notes, std::span<const SteadyNote> passing,
-                                    const RaagLearning* learning) {
-  return RankRaags(notes, passing, learning, EstimateTonic(notes));
+                                    const RaagLearning* learning, const IdentifyOptions& options, IdentifyTrace* trace) {
+  return RankRaags(notes, passing, learning, EstimateTonic(notes), options, trace);
 }
 
 std::vector<RaagMatch> IdentifyRaagAtSa(std::span<const SteadyNote> notes, double sa,
-                                      std::span<const SteadyNote> passing, const RaagLearning* learning) {
+                                      std::span<const SteadyNote> passing, const RaagLearning* learning,
+                                      const IdentifyOptions& options) {
   if (!std::isfinite(sa) || sa <= 0) return {};
   const TonicCandidate candidate{sa, 0};
-  return RankRaags(notes, passing, learning, std::span(&candidate, 1));
+  return RankRaags(notes, passing, learning, std::span(&candidate, 1), options);
 }
 
 std::vector<RaagMatch> MatchRaag(std::span<const SteadyNote> notes, const Raag& raag,
-                                 std::span<const SteadyNote> passing, const RaagLearning* learning) {
+                                 std::span<const SteadyNote> passing, const RaagLearning* learning,
+                                 const IdentifyOptions& options) {
   std::vector<RaagMatch> matches;
-  ForEachSa(notes, passing, EstimateTonic(notes), [&](const TonicCandidate& candidate, const Shares& shares) {
+  ForEachSa(notes, passing, EstimateTonic(notes), options, [&](const TonicCandidate& candidate, const Shares& shares) {
     RaagMatch match{&raag, candidate.frequency, 0, 0};
     match.score = Score(raag, shares, candidate.score, learning, &match.foreign_svaras);
     matches.push_back(match);
-  });
+  }, &raag);
   std::sort(matches.begin(), matches.end(), Better);
   return matches;
 }
 
 std::string LearningText(const RaagLearning& learning) {
-  // "profile,<raag>,<recordings>,<12 shares>" and "chance,<raag>,<recordings>,<share>".
+  // "profile,<raag>,<recordings>,<12 shares>"; legacy chance rows are retired.
   std::ostringstream text;
   text.precision(6);
   for (const auto& [raag, profile] : learning.profiles) {
     text << "profile," << raag->name << ',' << profile.recordings;
     for (double share : profile.held) text << ',' << share;
     text << '\n';
-  }
-  for (const auto& [raag, chance] : learning.phrase_chance) {
-    text << "chance," << raag->name << ',' << chance.recordings << ',' << chance.share << '\n';
   }
   return text.str();
 }
@@ -331,8 +315,6 @@ RaagLearning LearningFromText(std::string_view text) {
       RaagProfile& profile = learning.profiles[raag];
       profile.recordings = recordings;
       for (int svara = 0; svara < 12; ++svara) profile.held[svara] = std::atof(fields[3 + svara].c_str());
-    } else if (fields[0] == "chance") {
-      learning.phrase_chance[raag] = {recordings, std::atof(fields[3].c_str())};
     }
   }
   return learning;

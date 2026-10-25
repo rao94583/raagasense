@@ -5,11 +5,10 @@
 // every other svara rare, and a penalty for each svara it can't do without
 // that's missing and for each svara it doesn't use that's there. Given the
 // passing notes too, it also weighs the svaras passed through going up and
-// going down against those the raag leaves out each way. Given what's been
-// learned from labeled recordings, it also weighs how the held time on a
-// raag's svaras compares with its recordings', and how many of its
-// characteristic phrases turn up beyond what turns up by chance in other
-// raags' recordings.
+// going down against those the raag leaves out each way. Learned profiles,
+// if available, compare held time with labeled recordings. Characteristic
+// phrases are scored against a shuffled-note null model, even without
+// learned profiles.
 #pragma once
 
 #include <array>
@@ -21,6 +20,7 @@
 
 #include "core/raag.h"
 #include "core/steady.h"
+#include "core/tonic.h"
 
 namespace raagasense {
 
@@ -43,17 +43,9 @@ struct RaagProfile {
 };
 using RaagProfiles = std::map<const Raag*, RaagProfile>;
 
-// How much of a raag's phrases turn up in recordings of other raags, from
-// their Sa: what turns up by chance.
-struct PhraseChance {
-  int recordings = 0;
-  double share = 0;
-};
-
 // What's been learned from labeled recordings.
 struct RaagLearning {
   RaagProfiles profiles;
-  std::map<const Raag*, PhraseChance> phrase_chance;
 };
 
 // The share of the held time in notes on each svara from this Sa.
@@ -62,40 +54,54 @@ std::array<double, 12> HeldShares(std::span<const SteadyNote> notes, double sa);
 // Adds a recording's held shares (HeldShares from its Sa) to the raag's profile.
 void AddToProfile(const std::array<double, 12>& held, RaagProfile* profile);
 
-// The share of each raag's phrases that turn up in order among the passing
-// notes from this Sa, within a phrase of them, with up to two other svaras
-// between each of a phrase's svaras; raags without phrases are left out.
+// Mean complete-phrase match quality for each raag, preserving octave
+// contour and repeats. Extra notes are discounted; raags without phrases
+// are left out. This is raw coverage, before chance correction.
 std::map<const Raag*, double> PhraseShares(std::span<const SteadyNote> passing, double sa);
 
-// Learns from a recording of this raag with this Sa: its held shares for
-// the raag's profile, and its phrase shares (PhraseShares) for every other
-// raag's chance.
-void Learn(const Raag& raag, const std::array<double, 12>& held, const std::map<const Raag*, double>& phrase_shares,
-           RaagLearning* learning);
+// Adds the recording's held shares to its raag's learned profile.
+void Learn(const Raag& raag, const std::array<double, 12>& held, RaagLearning* learning);
 
-// The learning as text, one line per raag's profile or phrase chance, to
-// save; and the learning from such text, skipping raags it doesn't know.
+// One CSV line per profile; unknown raags and legacy "chance" rows are
+// ignored when loading. Old learned pitch profiles remain compatible.
 std::string LearningText(const RaagLearning& learning);
 RaagLearning LearningFromText(std::string_view text);
+
+struct IdentifyOptions {
+  // Disable to measure the contribution of characteristic phrase evidence.
+  bool use_phrases = true;
+};
+
+// Optional diagnostic output. Captures the actual production search without
+// supplying the reference Sa or changing scoring. Hypotheses retain every
+// raag/Sa pair, including alternative Sas for a single raag, best score first.
+// Scores and gaps are heuristic evidence, not calibrated probabilities.
+struct IdentifyTrace {
+  std::vector<TonicCandidate> candidates;
+  std::vector<RaagMatch> hypotheses;
+};
 
 // Each known raag's best match, best first; empty without notes. notes are
 // the held pitches (HeldPitches), passing the notes to follow the melody's
 // movement by (PassingNotes), and learning what's been learned from labeled
 // recordings, if any.
 std::vector<RaagMatch> IdentifyRaag(std::span<const SteadyNote> notes, std::span<const SteadyNote> passing = {},
-                                    const RaagLearning* learning = nullptr);
+                                    const RaagLearning* learning = nullptr, const IdentifyOptions& options = {},
+                                    IdentifyTrace* trace = nullptr);
 
 // Ranks raags using a supplied tonic, even if Sa is absent from the notes.
 // Every result retains exactly this Sa. Empty for no notes or an invalid Sa
 // (nonpositive or nonfinite). The Sa/Pa prior is omitted since it would be
 // the same for every raag; scores need not equal IdentifyRaag's scores.
 std::vector<RaagMatch> IdentifyRaagAtSa(std::span<const SteadyNote> notes, double sa,
-                                     std::span<const SteadyNote> passing = {}, const RaagLearning* learning = nullptr);
+                                     std::span<const SteadyNote> passing = {}, const RaagLearning* learning = nullptr,
+                                     const IdentifyOptions& options = {});
 
 // The matches for a known raag from each candidate Sa, best first; empty
 // without notes.
 std::vector<RaagMatch> MatchRaag(std::span<const SteadyNote> notes, const Raag& raag,
-                                 std::span<const SteadyNote> passing = {}, const RaagLearning* learning = nullptr);
+                                 std::span<const SteadyNote> passing = {}, const RaagLearning* learning = nullptr,
+                                 const IdentifyOptions& options = {});
 
 // Keeps a guess at the raag in first place while the evidence keeps coming
 // in, so that it changes only for good reason: when another raag has led it

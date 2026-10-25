@@ -4,6 +4,12 @@ load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("@rules_cc//cc:objc_library.bzl", "objc_library")
 
 cc_binary(
+    name = "raag_catalog",
+    srcs = ["raag_catalog.cpp"],
+    deps = ["//core"],
+)
+
+cc_binary(
     name = "analyze",
     srcs = ["analyze.cpp"],
     deps = [
@@ -53,8 +59,27 @@ cc_binary(
     srcs = ["evaluate.cpp"],
     deps = [
         ":evaluation",
+        ":joint_diagnostics",
         "//core",
         "//platform:audio_file",
+    ],
+)
+
+cc_library(
+    name = "joint_diagnostics",
+    srcs = ["joint_diagnostics.cpp"],
+    hdrs = ["joint_diagnostics.h"],
+    deps = ["//core"],
+)
+
+cc_test(
+    name = "joint_diagnostics_test",
+    size = "small",
+    srcs = ["joint_diagnostics_test.cpp"],
+    deps = [
+        ":joint_diagnostics",
+        "//core",
+        "@googletest//:gtest_main",
     ],
 )
 
@@ -63,6 +88,7 @@ cc_library(
     srcs = ["evaluation.cpp"],
     hdrs = ["evaluation.h"],
     deps = ["//core"],
+    visibility = ["//app/macos:__pkg__"],
 )
 
 cc_test(

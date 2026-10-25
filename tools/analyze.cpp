@@ -1,7 +1,7 @@
 // Tracks the pitch of a recording and summarizes it against a given Sa.
 //
 //   bazel run //tools:analyze -- [--sa HZ | --svaras "S g m d n"]
-//                                 [--steady | --notes | --tonic | --csv] RECORDING
+//                                 [--temporal] [--steady | --notes | --tonic | --csv] RECORDING
 //
 // Prints how much of the voiced time falls on each svara; with --steady, how
 // much of the time spent holding steady notes does; with --notes, one line per
@@ -30,7 +30,7 @@ constexpr double kMinConfidence = 0.5;
 
 int Usage() {
   std::fprintf(stderr,
-               "usage: analyze [--sa HZ | --svaras \"S g m d n\"] [--steady | --notes | --tonic | --csv] RECORDING\n");
+               "usage: analyze [--sa HZ | --svaras \"S g m d n\"] [--temporal] [--steady | --notes | --tonic | --csv] RECORDING\n");
   return 2;
 }
 
@@ -61,6 +61,7 @@ int main(int argc, char** argv) {
   if (const char* directory = std::getenv("BUILD_WORKING_DIRECTORY")) chdir(directory);
   double sa = 0;
   bool csv = false, steady = false, list_notes = false, tonic = false;
+  bool temporal = false;
   std::vector<int> svaras;
   std::string path;
   for (int i = 1; i < argc; ++i) {
@@ -71,6 +72,8 @@ int main(int argc, char** argv) {
       if (svaras.empty()) return Usage();
     } else if (!std::strcmp(argv[i], "--csv")) {
       csv = true;
+    } else if (!std::strcmp(argv[i], "--temporal")) {
+      temporal = true;
     } else if (!std::strcmp(argv[i], "--steady")) {
       steady = true;
     } else if (!std::strcmp(argv[i], "--notes")) {
@@ -96,6 +99,7 @@ int main(int argc, char** argv) {
 
   MelodyOptions options;
   options.sample_rate = audio->sample_rate;
+  if (temporal) options.tracking_frames = 15;
   MelodyTracker tracker(options);
   std::vector<PitchFrame> frames;
   tracker.Push(audio->samples, &frames);
