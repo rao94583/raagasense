@@ -62,6 +62,11 @@ not calibrated probabilities. Missing measurements are JSON `null`.
 Scores in the supplied-Sa search omit the Sa/Pa prior and should not be
 subtracted from scores in the automatic search.
 
+Version 2 adds `components` to matches, `raag_matches` containing the full
+production raag ranking, and `supplied_sa_matches` for the full fixed-Sa
+ranking. Original version 1 reports support the joint diagnostics above;
+component replay requires version 2. See [score attribution and experiments](score-analysis.md).
+
 ## Outcome categories
 
 Each recording receives one category, with missing proposals taking
@@ -151,6 +156,8 @@ musical evidence: phrase/movement support, held-note profiles, and
 penalties for expected notes not yet heard in an opening excerpt. Better
 extraction may still improve that evidence; agreement between two
 extractors is not proof of accurate lead-voice transcription.
+The subsequent [score attribution study](score-analysis.md) performs that
+comparison and records a controlled passing-note presence experiment.
 
 Local artifacts:
 

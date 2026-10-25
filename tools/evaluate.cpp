@@ -148,7 +148,7 @@ std::string NoteName(double frequency) {
 bool SamePitchClass(double a, double b) { return std::abs(std::remainder(CentsFromSa(a, b), 1200)) < 50; }
 
 void Usage() {
-  std::fprintf(stderr, "usage: evaluate [--all-sa] [--temporal] [--no-phrases] [--seconds N] [--pitch-dir DIR] [--pitch-format csv|saraga] [--joint-report FILE.jsonl] [--learn-to FILE] [DIRECTORY...]\n");
+  std::fprintf(stderr, "usage: evaluate [--all-sa] [--temporal] [--no-phrases] [--passing-note-presence] [--seconds N] [--pitch-dir DIR] [--pitch-format csv|saraga] [--joint-report FILE.jsonl] [--learn-to FILE] [DIRECTORY...]\n");
 }
 
 // A failed prediction counts as a miss, rather than disappearing from the
@@ -219,6 +219,8 @@ int main(int argc, char** argv) {
       temporal = true;
     } else if (!std::strcmp(argv[i], "--no-phrases")) {
       identify_options.use_phrases = false;
+    } else if (!std::strcmp(argv[i], "--passing-note-presence")) {
+      identify_options.use_passing_note_presence = true;
     } else if (!std::strcmp(argv[i], "--learn-to") && i + 1 < argc) {
       learn_to = argv[++i];
     } else if (!std::strcmp(argv[i], "--pitch-dir") && i + 1 < argc) {
@@ -298,6 +300,8 @@ int main(int argc, char** argv) {
   std::printf("Sa labels: %s. Learning requires explicit artist metadata; other recordings use rules alone.\n",
               all_sa ? "including unchecked (--all-sa)" : "checked where sa_checked is provided");
   std::printf("Phrase evidence: %s.\n", identify_options.use_phrases ? "octave-aware, corrected for shuffled-note matches" : "disabled");
+  std::printf("Missing-note evidence: %s.\n", identify_options.use_passing_note_presence ?
+                "held or stable passing notes (experimental)" : "held notes");
 
   std::ofstream joint_out;
   if (!joint_report.empty()) {
@@ -311,10 +315,11 @@ int main(int argc, char** argv) {
       std::fprintf(stderr, "%s: can't create joint report.\n", joint_report.c_str());
       return 1;
     }
-    joint_out << "{\"type\":\"settings\",\"version\":1,\"seconds\":" << seconds
+    joint_out << "{\"type\":\"settings\",\"version\":2,\"seconds\":" << seconds
               << ",\"pitch_source\":\"" << (pitch_directory.empty() ? (temporal ? "temporal" : "framewise") : pitch_format)
               << "\",\"include_unchecked_sa\":" << (all_sa ? "true" : "false")
               << ",\"phrases\":" << (identify_options.use_phrases ? "true" : "false")
+              << ",\"passing_note_presence\":" << (identify_options.use_passing_note_presence ? "true" : "false")
               << ",\"sa_tolerance_cents\":50,\"ignore_sa_octave\":true,\"profile_learning\":\"leave_artist_out\"}\n";
   }
 
@@ -447,7 +452,9 @@ int main(int argc, char** argv) {
     int fixed_rank = 0;
     if (labeled_sa > 0) {
       paired_automatic.Add(*raag, matches);
-      fixed_matches = IdentifyRaagAtSa(analysis.notes, labeled_sa, analysis.passing, &learning, identify_options);
+      IdentifyTrace fixed_trace;
+      fixed_matches = IdentifyRaagAtSa(analysis.notes, labeled_sa, analysis.passing, &learning, identify_options,
+                                        joint_report.empty() ? nullptr : &fixed_trace);
       fixed_rank = fixed.Add(*raag, fixed_matches);
     }
     if (!joint_report.empty()) {

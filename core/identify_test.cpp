@@ -41,13 +41,49 @@ TEST(IdentifyRaag, TracePreservesPredictionsAndAlternativeTonicHypotheses) {
     EXPECT_DOUBLE_EQ(traced[i].sa, normal[i].sa);
     EXPECT_DOUBLE_EQ(traced[i].score, normal[i].score);
     EXPECT_EQ(traced[i].foreign_svaras, normal[i].foreign_svaras);
+    EXPECT_FALSE(normal[i].components);
+    ASSERT_TRUE(traced[i].components);
     const auto best = std::find_if(trace.hypotheses.begin(), trace.hypotheses.end(),
                                    [&](const auto& pair) { return pair.raag == traced[i].raag; });
     ASSERT_NE(best, trace.hypotheses.end());
     EXPECT_DOUBLE_EQ(best->score, traced[i].score);
     EXPECT_DOUBLE_EQ(best->sa, traced[i].sa);
   }
+  for (const auto& pair : trace.hypotheses) {
+    ASSERT_TRUE(pair.components);
+    const auto& c = *pair.components;
+    EXPECT_NEAR(pair.score, c.tonic_prior + c.rare_prior + c.held_fit + c.missing_notes +
+                                c.foreign_notes + c.direction + c.learned_profile + c.phrases, 1e-12);
+  }
   EXPECT_TRUE(IdentifyRaag({}, {}, nullptr, {}, &trace).empty());
+  EXPECT_TRUE(trace.candidates.empty());
+  EXPECT_TRUE(trace.hypotheses.empty());
+}
+
+TEST(IdentifyRaagAtSa, ScoreBreakdownSeparatesMissingAndForeignNotes) {
+  std::vector<SteadyNote> notes;
+  for (int cents : {0, 100, 200}) Hold(&notes, cents, 1);
+  IdentifyTrace trace;
+  const auto traced = IdentifyRaagAtSa(notes, kSa, {}, nullptr, {}, &trace);
+  const auto normal = IdentifyRaagAtSa(notes, kSa);
+  ASSERT_EQ(traced.size(), normal.size());
+  for (size_t i = 0; i < normal.size(); ++i) {
+    EXPECT_EQ(traced[i].raag, normal[i].raag);
+    EXPECT_DOUBLE_EQ(traced[i].score, normal[i].score);
+    EXPECT_DOUBLE_EQ(traced[i].sa, normal[i].sa);
+  }
+  const auto yaman = std::find_if(traced.begin(), traced.end(), [](const auto& m) { return m.raag == FindRaag("Yaman"); });
+  ASSERT_NE(yaman, traced.end());
+  ASSERT_TRUE(yaman->components);
+  const auto& c = *yaman->components;
+  EXPECT_DOUBLE_EQ(c.tonic_prior, 0);
+  EXPECT_DOUBLE_EQ(c.rare_prior, 0);
+  EXPECT_DOUBLE_EQ(c.missing_notes, -2.0);  // Five essential notes not held.
+  EXPECT_DOUBLE_EQ(c.foreign_notes, -0.4);  // Komal Re is outside Yaman.
+  EXPECT_DOUBLE_EQ(c.learned_profile, 0);
+  EXPECT_DOUBLE_EQ(c.phrases, 0);
+  EXPECT_NEAR(yaman->score, c.held_fit + c.missing_notes + c.foreign_notes + c.direction, 1e-12);
+  EXPECT_TRUE(IdentifyRaagAtSa(notes, -1, {}, nullptr, {}, &trace).empty());
   EXPECT_TRUE(trace.candidates.empty());
   EXPECT_TRUE(trace.hypotheses.empty());
 }
@@ -173,6 +209,35 @@ std::vector<SteadyNote> Passing(std::initializer_list<int> cents) {
     notes[i].end = notes[i].start + 0.05;
   }
   return notes;
+}
+
+TEST(IdentifyRaagAtSa, PassingPresenceChangesOnlyMissingNoteEvidence) {
+  std::vector<SteadyNote> notes;
+  for (int cents : {0, 100, 200}) Hold(&notes, cents, 1);
+  const auto passing = Passing({400, 600});  // Brief Ga and tivra Ma.
+  IdentifyTrace baseline_trace, experimental_trace;
+  const auto baseline = IdentifyRaagAtSa(notes, kSa, passing, nullptr, {}, &baseline_trace);
+  IdentifyOptions options;
+  options.use_passing_note_presence = true;
+  const auto experimental = IdentifyRaagAtSa(notes, kSa, passing, nullptr, options, &experimental_trace);
+  const auto lookup = [](const auto& matches) -> const RaagMatch& {
+    return *std::find_if(matches.begin(), matches.end(), [](const auto& m) { return m.raag == FindRaag("Yaman"); });
+  };
+  const auto& before = lookup(baseline);
+  const auto& after = lookup(experimental);
+  ASSERT_TRUE(before.components);
+  ASSERT_TRUE(after.components);
+  EXPECT_NEAR(after.score - before.score, 0.8, 1e-12);
+  EXPECT_NEAR(after.components->missing_notes, -1.2, 1e-12);  // Pa, Dha, Ni still missing.
+  EXPECT_DOUBLE_EQ(after.components->foreign_notes, before.components->foreign_notes);
+  EXPECT_DOUBLE_EQ(after.components->held_fit, before.components->held_fit);
+  EXPECT_DOUBLE_EQ(after.components->direction, before.components->direction);
+  EXPECT_DOUBLE_EQ(after.components->phrases, before.components->phrases);
+  EXPECT_EQ(after.foreign_svaras, before.foreign_svaras);
+  EXPECT_EQ(experimental_trace.candidates[0].frequency, baseline_trace.candidates[0].frequency);
+  // An absent passing track preserves the existing score even with the option.
+  const auto no_passing = IdentifyRaagAtSa(notes, kSa, {}, nullptr, options);
+  EXPECT_DOUBLE_EQ(lookup(no_passing).score, lookup(IdentifyRaagAtSa(notes, kSa)).score);
 }
 
 TEST(PhraseShares, FindsPhrasesInOrderWithGraceNotes) {

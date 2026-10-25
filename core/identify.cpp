@@ -67,6 +67,7 @@ struct Shares {
   double held[12] = {};
   double up[12] = {};
   double down[12] = {};
+  bool visited[12] = {};
   std::map<const Raag*, double> phrase_evidence;
 };
 
@@ -124,7 +125,7 @@ void Likelihoods(const Raag& raag, const double (&weight)[12], const std::vector
 // EstimateTonic, and what's been learned, if anything; counts the foreign
 // svaras into *foreign_svaras.
 double Score(const Raag& raag, const Shares& shares, double sa_and_pa, const RaagLearning* learning,
-             int* foreign_svaras) {
+             const IdentifyOptions& options, int* foreign_svaras, RaagScoreComponents* components = nullptr) {
   const RaagProfile* profile = nullptr;
   if (learning) {
     const auto found = learning->profiles.find(&raag);
@@ -140,27 +141,46 @@ double Score(const Raag& raag, const Shares& shares, double sa_and_pa, const Raa
   Likelihoods(raag, weight, raag.ascent, up);
   Likelihoods(raag, weight, raag.descent, down);
   double score = kSaPaWeight * sa_and_pa - (raag.rare ? kRarePenalty : 0);
+  if (components) {
+    *components = {};
+    components->tonic_prior = kSaPaWeight * sa_and_pa;
+    components->rare_prior = -(raag.rare ? kRarePenalty : 0);
+  }
   for (int svara = 0; svara < 12; ++svara) {
-    score += shares.held[svara] * std::log(likely[svara]);
+    const double held = shares.held[svara] * std::log(likely[svara]);
+    score += held;
+    if (components) components->held_fit += held;
     const bool essential =
         weight[svara] > 0 && std::find(raag.occasional.begin(), raag.occasional.end(), svara) == raag.occasional.end();
-    if (essential && shares.held[svara] < kMissingShare) score -= kMissingPenalty;
+    if (essential && shares.held[svara] < kMissingShare &&
+        !(options.use_passing_note_presence && shares.visited[svara])) {
+      score -= kMissingPenalty;
+      if (components) components->missing_notes -= kMissingPenalty;
+    }
     if (weight[svara] == 0 && shares.held[svara] >= kMissingShare) {
       score -= kMissingPenalty;
+      if (components) components->foreign_notes -= kMissingPenalty;
       ++*foreign_svaras;
     }
     // Where the raag leaves svaras out going up or down, how much likelier the
     // moves are than with no direction.
-    score += kDirectionWeight * (shares.up[svara] * std::log(up[svara] / likely[svara]) +
-                                 shares.down[svara] * std::log(down[svara] / likely[svara]));
+    const double direction = kDirectionWeight * (shares.up[svara] * std::log(up[svara] / likely[svara]) +
+                                                shares.down[svara] * std::log(down[svara] / likely[svara]));
+    score += direction;
+    if (components) components->direction += direction;
     if (profile && profile->recordings > 0) {
       const double learned = (profile->recordings * profile->held[svara] + kProfilePrior * likely[svara]) /
                              (profile->recordings + kProfilePrior);
-      score += kProfileWeight * shares.held[svara] * std::log(learned / likely[svara]);
+      const double profile_fit = kProfileWeight * shares.held[svara] * std::log(learned / likely[svara]);
+      score += profile_fit;
+      if (components) components->learned_profile += profile_fit;
     }
   }
   const auto phrase = shares.phrase_evidence.find(&raag);
-  if (phrase != shares.phrase_evidence.end()) score += kPhraseWeight * phrase->second;
+  if (phrase != shares.phrase_evidence.end()) {
+    score += kPhraseWeight * phrase->second;
+    if (components) components->phrases = kPhraseWeight * phrase->second;
+  }
   return score;
 }
 
@@ -177,6 +197,15 @@ void ForEachSa(std::span<const SteadyNote> notes, std::span<const SteadyNote> pa
     Shares shares;
     for (const SteadyNote& note : notes) {
       shares.held[NearestSvara(CentsFromSa(note.frequency, candidate.frequency)).svara] += (note.end - note.start) / total;
+    }
+    if (options.use_passing_note_presence) {
+      // PassingNotes already requires a stable stretch of at least 30 ms.
+      // An expected svara need not be a resting note to have been heard.
+      for (const auto& note : passing) {
+        if (note.end > note.start && std::isfinite(note.frequency) && note.frequency > 0) {
+          shares.visited[NearestSvara(CentsFromSa(note.frequency, candidate.frequency)).svara] = true;
+        }
+      }
     }
     for (size_t i = 1; i + 1 < passing.size(); ++i) {
       if (passing[i].start - passing[i - 1].end > kPhraseSeconds || passing[i + 1].start - passing[i].end > kPhraseSeconds) {
@@ -208,7 +237,9 @@ std::vector<RaagMatch> RankRaags(std::span<const SteadyNote> notes, std::span<co
   ForEachSa(notes, passing, candidates, options, [&](const TonicCandidate& candidate, const Shares& shares) {
     for (const Raag& raag : Raags()) {
       RaagMatch match{&raag, candidate.frequency, 0, 0};
-      match.score = Score(raag, shares, candidate.score, learning, &match.foreign_svaras);
+      if (trace) match.components.emplace();
+      match.score = Score(raag, shares, candidate.score, learning, options, &match.foreign_svaras,
+                          trace ? &*match.components : nullptr);
       if (trace) trace->hypotheses.push_back(match);
       auto known = std::find_if(best.begin(), best.end(), [&](const RaagMatch& m) { return m.raag == &raag; });
       if (known == best.end()) {
@@ -263,10 +294,13 @@ std::vector<RaagMatch> IdentifyRaag(std::span<const SteadyNote> notes, std::span
 
 std::vector<RaagMatch> IdentifyRaagAtSa(std::span<const SteadyNote> notes, double sa,
                                       std::span<const SteadyNote> passing, const RaagLearning* learning,
-                                      const IdentifyOptions& options) {
-  if (!std::isfinite(sa) || sa <= 0) return {};
+                                      const IdentifyOptions& options, IdentifyTrace* trace) {
+  if (!std::isfinite(sa) || sa <= 0) {
+    if (trace) *trace = {};
+    return {};
+  }
   const TonicCandidate candidate{sa, 0};
-  return RankRaags(notes, passing, learning, std::span(&candidate, 1), options);
+  return RankRaags(notes, passing, learning, std::span(&candidate, 1), options, trace);
 }
 
 std::vector<RaagMatch> MatchRaag(std::span<const SteadyNote> notes, const Raag& raag,
@@ -275,7 +309,7 @@ std::vector<RaagMatch> MatchRaag(std::span<const SteadyNote> notes, const Raag& 
   std::vector<RaagMatch> matches;
   ForEachSa(notes, passing, EstimateTonic(notes), options, [&](const TonicCandidate& candidate, const Shares& shares) {
     RaagMatch match{&raag, candidate.frequency, 0, 0};
-    match.score = Score(raag, shares, candidate.score, learning, &match.foreign_svaras);
+    match.score = Score(raag, shares, candidate.score, learning, options, &match.foreign_svaras);
     matches.push_back(match);
   }, &raag);
   std::sort(matches.begin(), matches.end(), Better);

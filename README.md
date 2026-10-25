@@ -140,6 +140,12 @@ pair, the actual winner's Sa, and the reference pair's rank, score gap and
 ties. It distinguishes a missing tonic candidate from a scoring failure;
 the standalone "Sa alone" estimate is not necessarily the winner's Sa.
 Existing reports are not overwritten. See [joint-search diagnostics](docs/joint-search.md).
+Version 2 reports include each score component. Use
+`python3 tools/score_ablation.py REPORT.jsonl --output NEW_DIRECTORY` to
+inspect why wrong pairs win and replay individual component removals.
+`evaluate --passing-note-presence` experimentally counts stable passing
+notes as evidence that expected svaras were heard; it is disabled by
+default. See [the score analysis and experiment](docs/score-analysis.md).
 
 Characteristic phrases retain octave contour and repeated notes. Matches
 are discounted for inserted notes and checked against shuffled versions of

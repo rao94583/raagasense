@@ -40,7 +40,20 @@ void Match(std::ostream& out, const RaagMatch& match) {
   out << "{\"raag\":"; String(out, match.raag->name);
   out << ",\"sa_hz\":"; Number(out, match.sa);
   out << ",\"score\":"; Number(out, match.score);
-  out << ",\"foreign_svaras\":" << match.foreign_svaras << '}';
+  out << ",\"foreign_svaras\":" << match.foreign_svaras;
+  if (match.components) {
+    const auto& c = *match.components;
+    out << ",\"components\":{\"tonic_prior\":"; Number(out, c.tonic_prior);
+    out << ",\"rare_prior\":"; Number(out, c.rare_prior);
+    out << ",\"held_fit\":"; Number(out, c.held_fit);
+    out << ",\"missing_notes\":"; Number(out, c.missing_notes);
+    out << ",\"foreign_notes\":"; Number(out, c.foreign_notes);
+    out << ",\"direction\":"; Number(out, c.direction);
+    out << ",\"learned_profile\":"; Number(out, c.learned_profile);
+    out << ",\"phrases\":"; Number(out, c.phrases);
+    out << '}';
+  }
+  out << '}';
 }
 }  // namespace
 
@@ -120,7 +133,17 @@ void WriteJointDiagnostic(std::ostream& out, std::string_view file, const Raag& 
   const auto truth_at = std::find_if(supplied_sa_matches.begin(), supplied_sa_matches.end(),
                                     [&](const auto& pair) { return pair.raag == &truth; });
   if (truth_at == supplied_sa_matches.end()) out << "null"; else out << (truth_at - supplied_sa_matches.begin() + 1);
-  out << ",\"candidates\":[";
+  out << ",\"raag_matches\":[";
+  for (size_t i = 0; i < matches.size(); ++i) {
+    if (i) out << ',';
+    Match(out, matches[i]);
+  }
+  out << "],\"supplied_sa_matches\":[";
+  for (size_t i = 0; i < supplied_sa_matches.size(); ++i) {
+    if (i) out << ',';
+    Match(out, supplied_sa_matches[i]);
+  }
+  out << "],\"candidates\":[";
   for (size_t i = 0; i < trace.candidates.size(); ++i) {
     if (i) out << ',';
     const auto& candidate = trace.candidates[i];

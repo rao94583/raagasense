@@ -13,6 +13,7 @@
 
 #include <array>
 #include <map>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -24,6 +25,19 @@
 
 namespace raagasense {
 
+// Weighted contributions to the existing score. Populated only when tracing.
+// Their sum agrees with score to floating-point rounding precision.
+struct RaagScoreComponents {
+  double tonic_prior = 0;
+  double rare_prior = 0;
+  double held_fit = 0;
+  double missing_notes = 0;
+  double foreign_notes = 0;
+  double direction = 0;
+  double learned_profile = 0;
+  double phrases = 0;
+};
+
 struct RaagMatch {
   const Raag* raag = nullptr;
   // Hz, as from EstimateTonic.
@@ -33,6 +47,7 @@ struct RaagMatch {
   // How many svaras the raag doesn't use have at least a small share of the
   // held time from this Sa: evidence against it.
   int foreign_svaras = 0;
+  std::optional<RaagScoreComponents> components;
 };
 
 // What labeled recordings of a raag show: the mean share of their held time
@@ -70,6 +85,10 @@ RaagLearning LearningFromText(std::string_view text);
 struct IdentifyOptions {
   // Disable to measure the contribution of characteristic phrase evidence.
   bool use_phrases = true;
+  // Experimental: a stable passing note can satisfy presence of an expected
+  // svara even when it accounts for little held time. Other score terms stay
+  // unchanged. Disabled by default because current comparisons show tradeoffs.
+  bool use_passing_note_presence = false;
 };
 
 // Optional diagnostic output. Captures the actual production search without
@@ -95,7 +114,7 @@ std::vector<RaagMatch> IdentifyRaag(std::span<const SteadyNote> notes, std::span
 // the same for every raag; scores need not equal IdentifyRaag's scores.
 std::vector<RaagMatch> IdentifyRaagAtSa(std::span<const SteadyNote> notes, double sa,
                                      std::span<const SteadyNote> passing = {}, const RaagLearning* learning = nullptr,
-                                     const IdentifyOptions& options = {});
+                                     const IdentifyOptions& options = {}, IdentifyTrace* trace = nullptr);
 
 // The matches for a known raag from each candidate Sa, best first; empty
 // without notes.
