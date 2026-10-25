@@ -1,4 +1,6 @@
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("@rules_cc//cc:objc_library.bzl", "objc_library")
 
 cc_binary(
@@ -50,7 +52,25 @@ cc_binary(
     name = "evaluate",
     srcs = ["evaluate.cpp"],
     deps = [
+        ":evaluation",
         "//core",
         "//platform:audio_file",
+    ],
+)
+
+cc_library(
+    name = "evaluation",
+    srcs = ["evaluation.cpp"],
+    hdrs = ["evaluation.h"],
+    deps = ["//core"],
+)
+
+cc_test(
+    name = "evaluation_test",
+    size = "small",
+    srcs = ["evaluation_test.cpp"],
+    deps = [
+        ":evaluation",
+        "@googletest//:gtest_main",
     ],
 )

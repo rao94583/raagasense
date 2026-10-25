@@ -32,6 +32,11 @@ struct RSRaagGuesses {
 // Forgets what's been heard, for a new piece.
 - (void)startOver;
 
+// 0 selects automatic Sa; a positive frequency fixes Sa for classification.
+// Keeps the accumulated pitches, but resets the leader and discards any
+// pending result computed using the previous Sa.
+@property(nonatomic) double saFrequency;
+
 // How many raags the learning has profiles for.
 @property(nonatomic, readonly) NSUInteger learnedRaags;
 

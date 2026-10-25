@@ -85,6 +85,13 @@ RaagLearning LearningFromText(std::string_view text);
 std::vector<RaagMatch> IdentifyRaag(std::span<const SteadyNote> notes, std::span<const SteadyNote> passing = {},
                                     const RaagLearning* learning = nullptr);
 
+// Ranks raags using a supplied tonic, even if Sa is absent from the notes.
+// Every result retains exactly this Sa. Empty for no notes or an invalid Sa
+// (nonpositive or nonfinite). The Sa/Pa prior is omitted since it would be
+// the same for every raag; scores need not equal IdentifyRaag's scores.
+std::vector<RaagMatch> IdentifyRaagAtSa(std::span<const SteadyNote> notes, double sa,
+                                     std::span<const SteadyNote> passing = {}, const RaagLearning* learning = nullptr);
+
 // The matches for a known raag from each candidate Sa, best first; empty
 // without notes.
 std::vector<RaagMatch> MatchRaag(std::span<const SteadyNote> notes, const Raag& raag,

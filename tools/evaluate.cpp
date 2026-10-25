@@ -1,6 +1,7 @@
 // Checks the analysis against a folder of labeled recordings.
 //
-//   bazel run //tools:evaluate -- [--all-sa] [--learn-to FILE] [DIRECTORY...]
+//   bazel run //tools:evaluate -- [--all-sa] [--seconds N] [--pitch-dir DIR]
+//                              [--learn-to FILE] [DIRECTORY...]
 //
 // Each DIRECTORY (by default recordings/) holds audio files and, optionally,
 // labels.csv with columns file,raag,sa_hz and, optionally, sa_checked. A Sa
@@ -9,17 +10,18 @@
 // unknown. A file missing from
 // labels.csv takes its raag from the start of its name (miyan_ki_todi_male.m4a) and its
 // Sa, if any, from a note later in it (bilawal_male_C_sharp.m4a). For each
-// recording it prints the Sa estimated knowing the raag, with how much of the
-// held time fits the raag from it, and the same for the next best Sa; the Sa
-// estimated without knowing the raag; how much of the recording is held
-// notes; and the app's guess at the raag, with where the true raag ranks among
-// its guesses. A small gap between the two fits means the Sa is uncertain.
+// recording it prints the Sa estimated knowing the raag and without knowing
+// it, the share of held notes, and raag guesses/ranks using automatic and
+// supplied Sa.
 // The guesses use what's learned (raag profiles, and how often each raag's
 // phrases turn up by chance) from the other recordings with a known Sa,
-// leaving out those by the same artist ("artist ..." in the
-// labels' notes; otherwise each file counts as its own artist). With
+// leaving out those by the same artist (artist column or "artist ..." in
+// notes). Recordings without artist metadata use rules alone and cannot
+// train evaluation profiles. With
 // --learn-to, it also writes what's learned from all of them to FILE, for the
-// app to load.
+// app to load. Also compares automatic and labeled Sa on exactly the same
+// labeled subset. --seconds evaluates prefixes; --pitch-dir reads supplied
+// tracks named <audio filename>.csv instead of extracting melody from audio.
 #include <unistd.h>
 
 #include <algorithm>
@@ -42,53 +44,30 @@
 #include "core/svara.h"
 #include "core/tonic.h"
 #include "platform/audio_file.h"
+#include "tools/evaluation.h"
 
 namespace {
 
 using namespace raagasense;
-
-struct Label {
-  std::string raag;
-  double sa = 0;  // Hz; 0 if unknown
-  // From "artist ..." in the notes; empty if not given.
-  std::string artist;
-};
-
-// The fields of one CSV line, with double-quoted fields unquoted.
-std::vector<std::string> CsvFields(const std::string& line) {
-  std::vector<std::string> fields(1);
-  bool quoted = false;
-  for (char c : line) {
-    if (c == '"') {
-      quoted = !quoted;
-    } else if (c == ',' && !quoted) {
-      fields.emplace_back();
-    } else {
-      fields.back() += c;
-    }
-  }
-  return fields;
-}
+using evaluation::Label;
 
 // The labels in a directory's labels.csv, by the files' paths; with
 // all_sa, Sas not checked by ear count too.
-void ReadLabels(const std::filesystem::path& directory, bool all_sa, std::map<std::string, Label>* labels) {
+bool LoadLabels(const std::filesystem::path& directory, bool all_sa, std::map<std::string, Label>* labels) {
   std::ifstream in(directory / "labels.csv");
-  std::string line;
-  std::getline(in, line);
-  const std::vector<std::string> header = CsvFields(line);
-  const size_t checked = std::find(header.begin(), header.end(), "sa_checked") - header.begin();
-  while (std::getline(in, line)) {
-    const std::vector<std::string> fields = CsvFields(line);
-    if (fields.size() < 3) continue;
-    const bool unchecked = !all_sa && checked < fields.size() && fields[checked] == "no";
-    std::string artist;
-    if (fields.size() > 4) {
-      const size_t at = fields[4].find("artist ");
-      if (at != std::string::npos) artist = fields[4].substr(at + 7, fields[4].find(';', at) - at - 7);
-    }
-    (*labels)[(directory / fields[0]).string()] = {fields[1], unchecked ? 0 : std::atof(fields[2].c_str()), artist};
+  if (!in) {
+    if (!std::filesystem::exists(directory / "labels.csv")) return true;
+    std::fprintf(stderr, "%s: can't read labels.csv\n", directory.c_str());
+    return false;
   }
+  std::vector<Label> parsed;
+  std::string error;
+  if (!evaluation::ReadLabels(in, all_sa, &parsed, &error)) {
+    std::fprintf(stderr, "%s/labels.csv: %s\n", directory.c_str(), error.c_str());
+    return false;
+  }
+  for (const auto& label : parsed) (*labels)[(directory / label.file).string()] = label;
+  return true;
 }
 
 std::string Lower(std::string text) {
@@ -165,6 +144,57 @@ std::string NoteName(double frequency) {
 
 bool SamePitchClass(double a, double b) { return std::abs(std::remainder(CentsFromSa(a, b), 1200)) < 50; }
 
+void Usage() {
+  std::fprintf(stderr, "usage: evaluate [--all-sa] [--seconds N] [--pitch-dir DIR] [--learn-to FILE] [DIRECTORY...]\n");
+}
+
+// A failed prediction counts as a miss, rather than disappearing from the
+// denominator. All modes report per-raag recall and their leading confusions.
+struct Metrics {
+  int total = 0, first = 0, top3 = 0;
+  std::map<std::string, std::pair<int, int>> per_raag;
+  std::map<std::pair<std::string, std::string>, int> confusions;
+
+  int Add(const Raag& truth, const std::vector<RaagMatch>& matches) {
+    const auto at = std::find_if(matches.begin(), matches.end(), [&](const auto& m) { return m.raag == &truth; });
+    const int rank = at == matches.end() ? 0 : static_cast<int>(at - matches.begin()) + 1;
+    ++total;
+    first += rank == 1;
+    top3 += rank > 0 && rank <= 3;
+    auto& [correct, count] = per_raag[truth.name];
+    correct += rank == 1;
+    ++count;
+    if (rank != 1) ++confusions[{truth.name, matches.empty() ? "(no prediction)" : matches[0].raag->name}];
+    return rank;
+  }
+
+  void Print(const char* name) const {
+    if (total == 0) {
+      std::printf("\n%s: no eligible recordings.\n", name);
+      return;
+    }
+    std::printf("\n%s: top-1 %d/%d (%.1f%%); top-3 %d/%d (%.1f%%).\n", name, first, total,
+                100.0 * first / total, top3, total, 100.0 * top3 / total);
+    double macro = 0;
+    std::printf("  Recall by raag:\n");
+    for (const auto& [raag, counts] : per_raag) {
+      const auto [correct, count] = counts;
+      macro += static_cast<double>(correct) / count;
+      std::printf("    %-26s %d/%d\n", raag.c_str(), correct, count);
+    }
+    std::printf("  Mean per-raag recall: %.1f%%\n", 100 * macro / per_raag.size());
+    std::vector<std::pair<int, std::pair<std::string, std::string>>> ordered;
+    for (const auto& [pair, count] : confusions) ordered.push_back({count, pair});
+    std::sort(ordered.begin(), ordered.end(), [](const auto& a, const auto& b) {
+      return a.first != b.first ? a.first > b.first : a.second < b.second;
+    });
+    if (!ordered.empty()) std::printf("  Leading confusions (true -> predicted):\n");
+    for (size_t i = 0; i < std::min<size_t>(10, ordered.size()); ++i) {
+      std::printf("    %s -> %s: %d\n", ordered[i].second.first.c_str(), ordered[i].second.second.c_str(), ordered[i].first);
+    }
+  }
+};
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -172,14 +202,26 @@ int main(int argc, char** argv) {
   if (const char* directory = std::getenv("BUILD_WORKING_DIRECTORY")) chdir(directory);
   bool all_sa = false;
   std::string learn_to;
+  std::string pitch_directory;
+  double seconds = 0;
   std::vector<std::filesystem::path> directories;
   for (int i = 1; i < argc; ++i) {
     if (!std::strcmp(argv[i], "--all-sa")) {
       all_sa = true;
     } else if (!std::strcmp(argv[i], "--learn-to") && i + 1 < argc) {
       learn_to = argv[++i];
+    } else if (!std::strcmp(argv[i], "--pitch-dir") && i + 1 < argc) {
+      pitch_directory = argv[++i];
+    } else if (!std::strcmp(argv[i], "--seconds") && i + 1 < argc) {
+      if (!evaluation::Number(argv[++i], &seconds) || seconds <= 0) {
+        Usage();
+        return 2;
+      }
+    } else if (!std::strcmp(argv[i], "--help")) {
+      Usage();
+      return 0;
     } else if (argv[i][0] == '-') {
-      std::fprintf(stderr, "usage: evaluate [--all-sa] [--learn-to FILE] [DIRECTORY...]\n");
+      Usage();
       return 2;
     } else {
       directories.push_back(argv[i]);
@@ -190,7 +232,7 @@ int main(int argc, char** argv) {
   std::map<std::string, Label> labels;
   std::vector<std::filesystem::path> files;
   for (const std::filesystem::path& directory : directories) {
-    ReadLabels(directory, all_sa, &labels);
+    if (!LoadLabels(directory, all_sa, &labels)) return 1;
     std::vector<std::filesystem::path> here;
     std::error_code error_code;
     for (const auto& entry : std::filesystem::directory_iterator(directory, error_code)) {
@@ -207,6 +249,24 @@ int main(int argc, char** argv) {
     std::sort(here.begin(), here.end());
     files.insert(files.end(), here.begin(), here.end());
   }
+  if (files.empty()) {
+    std::fprintf(stderr, "No audio files found.\n");
+    return 1;
+  }
+  // Sidecars are keyed by filename; reject ambiguous names across directories.
+  if (!pitch_directory.empty()) {
+    std::map<std::string, int> names;
+    for (const auto& file : files) {
+      if (++names[file.filename().string()] > 1) {
+        std::fprintf(stderr, "--pitch-dir: duplicate audio filename %s\n", file.filename().c_str());
+        return 1;
+      }
+    }
+  }
+  std::printf("Pitch source: %s; duration: %s.\n", pitch_directory.empty() ? "MelodyTracker" : "supplied CSV tracks",
+              seconds > 0 ? (std::to_string(seconds) + " s prefixes").c_str() : "full recordings");
+  std::printf("Sa labels: %s. Learning requires explicit artist metadata; other recordings use rules alone.\n",
+              all_sa ? "including unchecked (--all-sa)" : "checked where sa_checked is provided");
 
   // Each recording analyzed, for learning raag profiles from the others and
   // then naming its raag.
@@ -232,39 +292,58 @@ int main(int argc, char** argv) {
     }
 
     std::string error;
-    const std::optional<AudioData> audio = ReadAudioFile(file.string(), &error);
+    std::optional<AudioData> audio = ReadAudioFile(file.string(), &error);
     if (!audio) {
-      std::printf("%-40s %s\n", name.c_str(), error.c_str());
-      continue;
+      std::fprintf(stderr, "%s: %s\n", name.c_str(), error.c_str());
+      return 1;
     }
-    MelodyOptions options;
-    options.sample_rate = audio->sample_rate;
-    MelodyTracker tracker(options);
+    if (seconds > 0 && seconds < audio->samples.size() / audio->sample_rate) {
+      audio->samples.resize(static_cast<size_t>(seconds * audio->sample_rate));
+    }
+    const double duration = audio->samples.size() / audio->sample_rate;
     std::vector<PitchFrame> frames;
-    tracker.Push(audio->samples, &frames);
-    tracker.Finish(&frames);
-    Analysis analysis{name, label != labels.end() && !label->second.artist.empty() ? label->second.artist : file.string(),
+    if (pitch_directory.empty()) {
+      MelodyOptions options;
+      options.sample_rate = audio->sample_rate;
+      MelodyTracker tracker(options);
+      tracker.Push(audio->samples, &frames);
+      tracker.Finish(&frames);
+    } else {
+      const auto path = std::filesystem::path(pitch_directory) / (name + ".csv");
+      std::ifstream in(path);
+      if (!in || !evaluation::ReadPitchCsv(in, &frames, &error)) {
+        std::fprintf(stderr, "%s: %s\n", path.c_str(), in ? error.c_str() : "can't read pitch CSV");
+        return 1;
+      }
+      frames.erase(std::lower_bound(frames.begin(), frames.end(), duration,
+                                   [](const PitchFrame& frame, double end) { return frame.time < end; }), frames.end());
+    }
+    Analysis analysis{name, label != labels.end() ? label->second.artist : "",
                       raag, labeled_sa, 0, HeldPitches(frames), PassingNotes(frames), {}, {}, {}, {}};
     double held = 0;
     for (const SteadyNote& note : analysis.notes) held += note.end - note.start;
-    analysis.held_share = held / (audio->samples.size() / audio->sample_rate);
+    analysis.held_share = duration > 0 ? held / duration : 0;
     analysis.with_raag = EstimateTonicForSvaras(analysis.notes, raag->svaras);
     analysis.alone = EstimateTonic(analysis.notes);
     if (labeled_sa > 0) {
       analysis.held = HeldShares(analysis.notes, labeled_sa);
       analysis.phrase_shares = PhraseShares(analysis.passing, labeled_sa);
     }
-    if (analysis.with_raag.empty()) {
-      std::printf("%-40s %-26s no held notes\n", name.c_str(), raag->name.c_str());
-      continue;
-    }
     analyses.push_back(std::move(analysis));
+  }
+  if (analyses.empty()) {
+    std::fprintf(stderr, "No recordings with recognized raag labels.\n");
+    return 1;
   }
 
   if (!learn_to.empty()) {
     RaagLearning learning;
+    int trained = 0;
     for (const Analysis& analysis : analyses) {
-      if (analysis.labeled_sa > 0) Learn(*analysis.raag, analysis.held, analysis.phrase_shares, &learning);
+      if (analysis.labeled_sa > 0 && !analysis.notes.empty()) {
+        Learn(*analysis.raag, analysis.held, analysis.phrase_shares, &learning);
+        ++trained;
+      }
     }
     std::ofstream out(learn_to);
     out << LearningText(learning);
@@ -272,14 +351,15 @@ int main(int argc, char** argv) {
       std::fprintf(stderr, "%s: can't write\n", learn_to.c_str());
       return 1;
     }
-    std::fprintf(stderr, "Learned from %zu recordings of %zu raags; wrote %s\n", analyses.size(),
+    std::fprintf(stderr, "Learned from %d recordings of %zu raags; wrote %s\n", trained,
                  learning.profiles.size(), learn_to.c_str());
   }
 
-  std::printf("%-40s %-26s %-10s  %-10s %4s  %-10s %4s  %-10s %5s  %-26s %4s\n", "file", "raag", "label Sa",
-              "Sa | raag", "fit", "next Sa", "fit", "Sa alone", "held", "raag guess", "rank");
+  std::printf("%-40s %-26s %-10s %-10s %-10s %5s  %-26s %4s  %-26s %4s\n", "file", "raag", "label Sa",
+              "Sa | raag", "Sa alone", "held", "auto-Sa guess", "rank", "label-Sa guess", "rank");
   int labeled = 0, right_with_raag = 0, right_alone = 0;
-  int identified = 0, first = 0, top3 = 0, same_svaras = 0;
+  int missing_artists = 0;
+  Metrics automatic, paired_automatic, fixed;
   for (const Analysis& analysis : analyses) {
     const Raag* raag = analysis.raag;
     const std::vector<TonicCandidate>& with_raag = analysis.with_raag;
@@ -288,8 +368,8 @@ int main(int argc, char** argv) {
     std::string mark_with = " ", mark_alone = " ";
     if (labeled_sa > 0) {
       ++labeled;
-      const bool with_ok = SamePitchClass(with_raag[0].frequency, labeled_sa);
-      const bool alone_ok = SamePitchClass(alone[0].frequency, labeled_sa);
+      const bool with_ok = !with_raag.empty() && SamePitchClass(with_raag[0].frequency, labeled_sa);
+      const bool alone_ok = !alone.empty() && SamePitchClass(alone[0].frequency, labeled_sa);
       right_with_raag += with_ok;
       right_alone += alone_ok;
       mark_with = with_ok ? " " : "x";
@@ -299,37 +379,38 @@ int main(int argc, char** argv) {
     // Learned from the other artists' recordings with a known Sa, so that no
     // recording helps name itself or its artist's others.
     RaagLearning learning;
-    for (const Analysis& other : analyses) {
-      if (other.artist == analysis.artist || other.labeled_sa <= 0) continue;
-      Learn(*other.raag, other.held, other.phrase_shares, &learning);
+    if (analysis.artist.empty()) ++missing_artists;
+    if (!analysis.artist.empty()) {
+      for (const Analysis& other : analyses) {
+        if (other.artist.empty() || other.artist == analysis.artist || other.labeled_sa <= 0 || other.notes.empty()) continue;
+        Learn(*other.raag, other.held, other.phrase_shares, &learning);
+      }
     }
     const std::vector<RaagMatch> matches = IdentifyRaag(analysis.notes, analysis.passing, &learning);
-    const int rank = static_cast<int>(
-        std::find_if(matches.begin(), matches.end(), [&](const RaagMatch& m) { return m.raag == raag; }) -
-        matches.begin()) + 1;
-    ++identified;
-    first += rank == 1;
-    top3 += rank <= 3;
-    same_svaras += matches[0].raag->svaras == raag->svaras;
-    // "~" marks a wrong guess with the true raag's svaras.
-    const std::string guess = (rank == 1 ? " " : matches[0].raag->svaras == raag->svaras ? "~" : "x") +
-                              matches[0].raag->name;
-
-    const bool has_next = with_raag.size() > 1;
-    std::printf("%-40s %-26s %-10s %s%-10s %3.0f%%  %-10s %3.0f%% %s%-10s %4.0f%%  %-26s %4d\n",
+    const int rank = automatic.Add(*raag, matches);
+    std::vector<RaagMatch> fixed_matches;
+    int fixed_rank = 0;
+    if (labeled_sa > 0) {
+      paired_automatic.Add(*raag, matches);
+      fixed_matches = IdentifyRaagAtSa(analysis.notes, labeled_sa, analysis.passing, &learning);
+      fixed_rank = fixed.Add(*raag, fixed_matches);
+    }
+    std::printf("%-40s %-26s %-10s %s%-9s %s%-9s %4.0f%%  %-26s %4d  %-26s %4s\n",
                 analysis.name.c_str(), raag->name.c_str(), labeled_sa > 0 ? NoteName(labeled_sa).c_str() : "?",
-                mark_with.c_str(), NoteName(with_raag[0].frequency).c_str(), 100 * with_raag[0].score,
-                has_next ? NoteName(with_raag[1].frequency).c_str() : "-", has_next ? 100 * with_raag[1].score : 0.0,
-                mark_alone.c_str(), NoteName(alone[0].frequency).c_str(), 100 * analysis.held_share, guess.c_str(),
-                rank);
+                mark_with.c_str(), with_raag.empty() ? "?" : NoteName(with_raag[0].frequency).c_str(),
+                mark_alone.c_str(), alone.empty() ? "?" : NoteName(alone[0].frequency).c_str(),
+                100 * analysis.held_share, matches.empty() ? "(no prediction)" : matches[0].raag->name.c_str(), rank,
+                labeled_sa <= 0 ? "-" : fixed_matches.empty() ? "(no prediction)" : fixed_matches[0].raag->name.c_str(),
+                labeled_sa > 0 ? std::to_string(fixed_rank).c_str() : "-");
   }
   if (labeled > 0) {
     std::printf("\nSa right on %d of %d labeled recordings knowing the raag, %d without (x marks a miss).\n",
                 right_with_raag, labeled, right_alone);
   }
-  if (identified > 0) {
-    std::printf("Raag named first on %d of %d, in the top 3 on %d; the first guess has the true raag's svaras on %d.\n",
-                first, identified, top3, same_svaras);
-  }
+  std::printf("%d/%zu recordings lack artist metadata and were evaluated with rules alone. Rank 0 means no prediction.\n",
+              missing_artists, analyses.size());
+  automatic.Print("Automatic Sa (all recordings)");
+  paired_automatic.Print("Automatic Sa (labeled subset)");
+  fixed.Print("Labeled Sa (same subset)");
   return 0;
 }

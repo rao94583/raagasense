@@ -181,12 +181,13 @@ double Score(const Raag& raag, const Shares& shares, double sa_and_pa, const Raa
 
 // Calls score(candidate, shares) for each candidate Sa.
 template <typename Function>
-void ForEachSa(std::span<const SteadyNote> notes, std::span<const SteadyNote> passing, Function score) {
+void ForEachSa(std::span<const SteadyNote> notes, std::span<const SteadyNote> passing,
+               std::span<const TonicCandidate> candidates, Function score) {
   double total = 0, passing_total = 0;
   for (const SteadyNote& note : notes) total += note.end - note.start;
   for (const SteadyNote& note : passing) passing_total += note.end - note.start;
   if (total <= 0) return;
-  for (const TonicCandidate& candidate : EstimateTonic(notes)) {
+  for (const TonicCandidate& candidate : candidates) {
     Shares shares;
     for (const SteadyNote& note : notes) {
       shares.held[NearestSvara(CentsFromSa(note.frequency, candidate.frequency)).svara] += (note.end - note.start) / total;
@@ -209,6 +210,25 @@ void ForEachSa(std::span<const SteadyNote> notes, std::span<const SteadyNote> pa
 }
 
 bool Better(const RaagMatch& a, const RaagMatch& b) { return a.score > b.score; }
+
+std::vector<RaagMatch> RankRaags(std::span<const SteadyNote> notes, std::span<const SteadyNote> passing,
+                                const RaagLearning* learning, std::span<const TonicCandidate> candidates) {
+  std::vector<RaagMatch> best;
+  ForEachSa(notes, passing, candidates, [&](const TonicCandidate& candidate, const Shares& shares) {
+    for (const Raag& raag : Raags()) {
+      RaagMatch match{&raag, candidate.frequency, 0, 0};
+      match.score = Score(raag, shares, candidate.score, learning, &match.foreign_svaras);
+      auto known = std::find_if(best.begin(), best.end(), [&](const RaagMatch& m) { return m.raag == &raag; });
+      if (known == best.end()) {
+        best.push_back(match);
+      } else if (Better(match, *known)) {
+        *known = match;
+      }
+    }
+  });
+  std::sort(best.begin(), best.end(), Better);
+  return best;
+}
 
 }  // namespace
 
@@ -253,27 +273,20 @@ void Learn(const Raag& raag, const std::array<double, 12>& held, const std::map<
 
 std::vector<RaagMatch> IdentifyRaag(std::span<const SteadyNote> notes, std::span<const SteadyNote> passing,
                                     const RaagLearning* learning) {
-  std::vector<RaagMatch> best;
-  ForEachSa(notes, passing, [&](const TonicCandidate& candidate, const Shares& shares) {
-    for (const Raag& raag : Raags()) {
-      RaagMatch match{&raag, candidate.frequency, 0, 0};
-      match.score = Score(raag, shares, candidate.score, learning, &match.foreign_svaras);
-      auto known = std::find_if(best.begin(), best.end(), [&](const RaagMatch& m) { return m.raag == &raag; });
-      if (known == best.end()) {
-        best.push_back(match);
-      } else if (Better(match, *known)) {
-        *known = match;
-      }
-    }
-  });
-  std::sort(best.begin(), best.end(), Better);
-  return best;
+  return RankRaags(notes, passing, learning, EstimateTonic(notes));
+}
+
+std::vector<RaagMatch> IdentifyRaagAtSa(std::span<const SteadyNote> notes, double sa,
+                                      std::span<const SteadyNote> passing, const RaagLearning* learning) {
+  if (!std::isfinite(sa) || sa <= 0) return {};
+  const TonicCandidate candidate{sa, 0};
+  return RankRaags(notes, passing, learning, std::span(&candidate, 1));
 }
 
 std::vector<RaagMatch> MatchRaag(std::span<const SteadyNote> notes, const Raag& raag,
                                  std::span<const SteadyNote> passing, const RaagLearning* learning) {
   std::vector<RaagMatch> matches;
-  ForEachSa(notes, passing, [&](const TonicCandidate& candidate, const Shares& shares) {
+  ForEachSa(notes, passing, EstimateTonic(notes), [&](const TonicCandidate& candidate, const Shares& shares) {
     RaagMatch match{&raag, candidate.frequency, 0, 0};
     match.score = Score(raag, shares, candidate.score, learning, &match.foreign_svaras);
     matches.push_back(match);

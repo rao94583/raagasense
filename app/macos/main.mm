@@ -160,7 +160,15 @@ raagasense::RaagLearning LoadLearning() {
 }
 
 - (void)saChanged:(NSPopUpButton*)sender {
-  if (sender.indexOfSelectedItem > 0) _pitchView.saFrequency = NoteFrequency(static_cast<int>(sender.selectedTag));
+  const double sa = sender.indexOfSelectedItem > 0 ? NoteFrequency(static_cast<int>(sender.selectedTag)) : 0;
+  _identifier.saFrequency = sa;
+  if (sa > 0) _pitchView.saFrequency = sa;
+  if (_livePitch->running()) {
+    _raagLabel.stringValue = @"Raag: listening…";
+  } else {
+    [self showRaagIdle];
+  }
+  [self guessRaag];
 }
 
 - (void)showRaagIdle {

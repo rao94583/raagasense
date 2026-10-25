@@ -12,6 +12,8 @@
   raagasense::RaagTracker _tracker;
   dispatch_queue_t _queue;
   bool _busy;
+  double _saFrequency;
+  NSUInteger _generation;
 }
 
 - (instancetype)initWithLivePitch:(raagasense::LivePitch*)livePitch learning:(raagasense::RaagLearning)learning {
@@ -31,6 +33,18 @@
 - (void)startOver {
   _frames.clear();
   _tracker = raagasense::RaagTracker();
+  ++_generation;
+}
+
+- (double)saFrequency {
+  return _saFrequency;
+}
+
+- (void)setSaFrequency:(double)frequency {
+  if (_saFrequency == frequency) return;
+  _saFrequency = frequency;
+  _tracker = raagasense::RaagTracker();
+  ++_generation;
 }
 
 - (void)update:(void (^)(const RSRaagGuesses& guesses))done {
@@ -48,20 +62,24 @@
   _busy = true;
   auto frames = std::make_shared<std::vector<raagasense::PitchFrame>>(_frames);
   std::shared_ptr<const raagasense::RaagLearning> learning = _learning;
+  const double sa = _saFrequency;
+  const NSUInteger generation = _generation;
   __weak RSRaagIdentifier* weakSelf = self;
   dispatch_async(_queue, ^{
     const std::vector<raagasense::SteadyNote> notes = raagasense::HeldPitches(*frames);
     auto guesses = std::make_shared<RSRaagGuesses>();
-    guesses->matches = raagasense::IdentifyRaag(notes, raagasense::PassingNotes(*frames),
-                                                learning->profiles.empty() ? nullptr : learning.get());
+    const auto passing = raagasense::PassingNotes(*frames);
+    guesses->matches = sa > 0 ? raagasense::IdentifyRaagAtSa(notes, sa, passing, learning.get())
+                             : raagasense::IdentifyRaag(notes, passing, learning.get());
     guesses->heard_seconds = frames->back().time - frames->front().time;
     for (const raagasense::SteadyNote& note : notes) guesses->held_seconds += note.end - note.start;
     dispatch_async(dispatch_get_main_queue(), ^{
       RSRaagIdentifier* identifier = weakSelf;
       if (!identifier) return;
       identifier->_busy = false;
-      // Guesses from before starting over are out of date.
-      if (identifier->_frames.empty() || frames->front().time < identifier->_frames.front().time) return;
+      // Starting over or changing Sa invalidates in-flight work, even when
+      // a restarted stream happens to have the same frame timestamps.
+      if (generation != identifier->_generation) return;
       guesses->matches = identifier->_tracker.Update(std::move(guesses->matches), frames->back().time);
       done(*guesses);
     });

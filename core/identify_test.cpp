@@ -4,6 +4,7 @@
 #include <initializer_list>
 #include <map>
 #include <cmath>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -21,6 +22,57 @@ void Hold(std::vector<SteadyNote>* notes, double cents, double seconds) {
 }
 
 TEST(IdentifyRaag, NoNotes) { EXPECT_TRUE(IdentifyRaag({}).empty()); }
+
+TEST(IdentifyRaagAtSa, UsesTheSuppliedTonicEvenWhenSaIsNotHeld) {
+  std::vector<SteadyNote> notes;
+  for (int cents : {100, 400, 600, 900, 1100}) Hold(&notes, cents, 1);
+  const auto matches = IdentifyRaagAtSa(notes, kSa);
+  ASSERT_EQ(matches.size(), Raags().size());
+  for (size_t i = 0; i < matches.size(); ++i) {
+    EXPECT_DOUBLE_EQ(matches[i].sa, kSa);
+    EXPECT_TRUE(std::isfinite(matches[i].score));
+    if (i > 0) EXPECT_GE(matches[i - 1].score, matches[i].score);
+  }
+  // Auto Sa can only propose pitches that were held in this passage.
+  for (const auto& match : IdentifyRaag(notes)) {
+    EXPECT_GT(std::abs(std::remainder(CentsFromSa(match.sa, kSa), 1200)), 50);
+  }
+  const auto octave = IdentifyRaagAtSa(notes, kSa * 2);
+  for (size_t i = 0; i < matches.size(); ++i) {
+    EXPECT_EQ(matches[i].raag, octave[i].raag);
+    EXPECT_NEAR(matches[i].score, octave[i].score, 1e-12);
+  }
+}
+
+TEST(IdentifyRaagAtSa, RejectsInvalidTonicAndEmptyNotes) {
+  std::vector<SteadyNote> notes;
+  Hold(&notes, 0, 1);
+  EXPECT_TRUE(IdentifyRaagAtSa({}, kSa).empty());
+  for (double sa : {0.0, -1.0, std::numeric_limits<double>::infinity(),
+                    std::numeric_limits<double>::quiet_NaN()}) {
+    EXPECT_TRUE(IdentifyRaagAtSa(notes, sa).empty());
+  }
+}
+
+TEST(IdentifyRaagAtSa, TonicChangesTheInterpretationAndTranspositionPreservesIt) {
+  std::vector<SteadyNote> notes;
+  for (int cents : {0, 200, 400, 600, 700, 900, 1100}) Hold(&notes, cents, 1);
+  const auto matches = IdentifyRaagAtSa(notes, kSa);
+  const auto wrong = IdentifyRaagAtSa(notes, kSa * std::exp2(100.0 / 1200));
+  const Raag* yaman = FindRaag("Yaman");
+  auto score = [yaman](const auto& ranked) {
+    return std::find_if(ranked.begin(), ranked.end(), [yaman](const auto& m) { return m.raag == yaman; })->score;
+  };
+  EXPECT_GT(score(matches), score(wrong));
+  const double factor = std::exp2(350.0 / 1200);
+  for (auto& note : notes) note.frequency *= factor;
+  const auto transposed = IdentifyRaagAtSa(notes, kSa * factor);
+  ASSERT_EQ(matches.size(), transposed.size());
+  for (size_t i = 0; i < matches.size(); ++i) {
+    EXPECT_EQ(matches[i].raag, transposed[i].raag);
+    EXPECT_NEAR(matches[i].score, transposed[i].score, 1e-12);
+  }
+}
 
 TEST(IdentifyRaag, Yaman) {
   std::vector<SteadyNote> notes;
@@ -80,6 +132,7 @@ TEST(IdentifyRaag, ProfilesDecideBetweenRaagsWithTheSameSvaras) {
   EXPECT_NEAR(learning.profiles[other].held[kKomalRe], 1.0 / 6, 1e-9);
   matches = IdentifyRaag(notes, {}, &learning);
   EXPECT_EQ(matches[0].raag, other);
+  EXPECT_EQ(IdentifyRaagAtSa(notes, kSa, {}, &learning)[0].raag, other);
 }
 
 // Short passing notes, one after another, in cents from kSa.
