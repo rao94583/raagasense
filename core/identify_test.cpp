@@ -135,5 +135,26 @@ TEST(Learning, RoundTripsAsText) {
   EXPECT_DOUBLE_EQ(read.phrase_chance.at(&bhoopali).share, 0.125);
 }
 
+TEST(RaagTracker, KeepsTheLeaderUnlessClearlyBeatenForAWhile) {
+  const Raag* yaman = FindRaag("Yaman");
+  const Raag* kalyan = FindRaag("Yaman Kalyan");
+  const Raag* bilawal = FindRaag("Bilawal");
+  RaagTracker tracker(TrackerOptions{0.1, 6});
+  auto update = [&](const Raag* first, double first_score, const Raag* second, double second_score, double now,
+                    int second_foreign = 0) {
+    return tracker.Update({{first, 233, first_score, 0}, {second, 233, second_score, second_foreign}}, now)[0].raag;
+  };
+  EXPECT_EQ(update(yaman, -1.0, kalyan, -1.2, 0), yaman);
+  // Narrowly beaten: kept.
+  EXPECT_EQ(update(kalyan, -1.0, yaman, -1.05, 2), yaman);
+  // Clearly beaten, but not yet for long enough: kept.
+  EXPECT_EQ(update(kalyan, -1.0, yaman, -1.2, 4), yaman);
+  EXPECT_EQ(update(kalyan, -1.0, yaman, -1.2, 8), yaman);
+  // Clearly beaten for 6 s: replaced.
+  EXPECT_EQ(update(kalyan, -1.0, yaman, -1.2, 10), kalyan);
+  // A foreign svara turning up for the leader replaces it at once.
+  EXPECT_EQ(update(bilawal, -1.0, kalyan, -1.02, 12, 1), bilawal);
+}
+
 }  // namespace
 }  // namespace raagasense

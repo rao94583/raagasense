@@ -102,10 +102,12 @@ raagasense::RaagLearning LoadLearning() {
   _listenButton.keyEquivalent = @" ";
 
   NSButton* recordButton = [NSButton buttonWithTitle:@"Record Sample…" target:self action:@selector(recordSample:)];
+  NSButton* startOverButton = [NSButton buttonWithTitle:@"Start Over" target:self action:@selector(startOver:)];
+  startOverButton.toolTip = @"Forget what's been heard, for a new piece";
 
   NSStackView* controls = [NSStackView stackViewWithViews:@[
     [NSTextField labelWithString:@"Sa:"], saPopUp, [NSTextField labelWithString:@"Input:"], _inputPopUp,
-    [[NSView alloc] init], recordButton, _listenButton
+    [[NSView alloc] init], startOverButton, recordButton, _listenButton
   ]];
   [controls setCustomSpacing:20 afterView:saPopUp];
   controls.edgeInsets = NSEdgeInsetsMake(8, 12, 8, 12);
@@ -149,6 +151,7 @@ raagasense::RaagLearning LoadLearning() {
   NSMenu* bar = [[NSMenu alloc] init];
   NSMenuItem* appItem = [bar addItemWithTitle:@"" action:nil keyEquivalent:@""];
   NSMenu* appMenu = [[NSMenu alloc] init];
+  [appMenu addItemWithTitle:@"Start Over" action:@selector(startOver:) keyEquivalent:@"k"];
   [appMenu addItemWithTitle:@"Record Sample…" action:@selector(recordSample:) keyEquivalent:@"r"];
   [appMenu addItem:[NSMenuItem separatorItem]];
   [appMenu addItemWithTitle:@"Quit RaagaSense" action:@selector(terminate:) keyEquivalent:@"q"];
@@ -277,6 +280,11 @@ raagasense::RaagLearning LoadLearning() {
     [delegate startGuessing];
     if (done) done(nil);
   });
+}
+
+- (void)startOver:(id)sender {
+  [_identifier startOver];
+  _raagLabel.stringValue = _livePitch->running() ? @"Raag: listening…" : @"Raag: starting over; press Listen";
 }
 
 - (void)recordSample:(id)sender {

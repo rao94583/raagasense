@@ -4,18 +4,12 @@
 
 #include "core/steady.h"
 
-namespace {
-
-// At most this many seconds of the latest frames are used, to bound the work.
-constexpr double kMaxSeconds = 600;
-
-}  // namespace
-
 @implementation RSRaagIdentifier {
   raagasense::LivePitch* _livePitch;
   std::shared_ptr<const raagasense::RaagLearning> _learning;
   std::vector<raagasense::PitchFrame> _frames;
   double _lastTime;
+  raagasense::RaagTracker _tracker;
   dispatch_queue_t _queue;
   bool _busy;
 }
@@ -34,17 +28,21 @@ constexpr double kMaxSeconds = 600;
   return _learning->profiles.size();
 }
 
+- (void)startOver {
+  _frames.clear();
+  _tracker = raagasense::RaagTracker();
+}
+
 - (void)update:(void (^)(const RSRaagGuesses& guesses))done {
   // A stream that has gone back in time is a new one.
   if (_livePitch->now() < _lastTime) {
-    _frames.clear();
+    [self startOver];
     _lastTime = 0;
   }
   for (const raagasense::PitchFrame& frame : _livePitch->Recent(5)) {
     if (frame.time > _lastTime) _frames.push_back(frame);
   }
   if (!_frames.empty()) _lastTime = _frames.back().time;
-  while (!_frames.empty() && _frames.front().time < _lastTime - kMaxSeconds) _frames.erase(_frames.begin());
   if (_busy || _frames.empty()) return;
 
   _busy = true;
@@ -62,6 +60,9 @@ constexpr double kMaxSeconds = 600;
       RSRaagIdentifier* identifier = weakSelf;
       if (!identifier) return;
       identifier->_busy = false;
+      // Guesses from before starting over are out of date.
+      if (identifier->_frames.empty() || frames->front().time < identifier->_frames.front().time) return;
+      guesses->matches = identifier->_tracker.Update(std::move(guesses->matches), frames->back().time);
       done(*guesses);
     });
   });

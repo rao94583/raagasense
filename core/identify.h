@@ -30,6 +30,9 @@ struct RaagMatch {
   double sa = 0;
   // Higher is better; only comparable between matches for the same notes.
   double score = 0;
+  // How many svaras the raag doesn't use have at least a small share of the
+  // held time from this Sa: evidence against it.
+  int foreign_svaras = 0;
 };
 
 // What labeled recordings of a raag show: the mean share of their held time
@@ -86,5 +89,36 @@ std::vector<RaagMatch> IdentifyRaag(std::span<const SteadyNote> notes, std::span
 // without notes.
 std::vector<RaagMatch> MatchRaag(std::span<const SteadyNote> notes, const Raag& raag,
                                  std::span<const SteadyNote> passing = {}, const RaagLearning* learning = nullptr);
+
+// Keeps a guess at the raag in first place while the evidence keeps coming
+// in, so that it changes only for good reason: when another raag has led it
+// clearly for a while, or when a svara the leader doesn't use turns up.
+struct TrackerOptions {
+  // How far ahead another raag's score must be, and for how many seconds of
+  // the stream, to take first place. Replaying 133 labeled recordings with a
+  // guess every 2 s, the first guess changed 491 times after the first 30 s
+  // without it, 223 times with these, while right 41% of that time without
+  // and 39% with. Holding on harder (0.15 for 20 s, or 0.3 for 30 s) changes
+  // it less but keeps more early mistakes: right 37% and 35% of the time.
+  double margin = 0.1;
+  double seconds = 6;
+};
+
+class RaagTracker {
+ public:
+  explicit RaagTracker(const TrackerOptions& options = {}) : options_(options) {}
+
+  // Takes the latest matches (IdentifyRaag's, best first) at this stream
+  // time, and returns them with the raag kept in first place, if it's kept.
+  std::vector<RaagMatch> Update(std::vector<RaagMatch> matches, double now);
+
+ private:
+  TrackerOptions options_;
+  const Raag* leader_ = nullptr;
+  int leader_foreign_ = 0;
+  // The raag that has been ahead of the leader by the margin, and since when.
+  const Raag* challenger_ = nullptr;
+  double challenger_since_ = 0;
+};
 
 }  // namespace raagasense

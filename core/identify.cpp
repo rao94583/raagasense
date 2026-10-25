@@ -132,8 +132,10 @@ void Likelihoods(const Raag& raag, const double (&weight)[12], const std::vector
 }
 
 // The score of the raag from a Sa with these shares, this score from
-// EstimateTonic, and what's been learned, if anything.
-double Score(const Raag& raag, const Shares& shares, double sa_and_pa, const RaagLearning* learning) {
+// EstimateTonic, and what's been learned, if anything; counts the foreign
+// svaras into *foreign_svaras.
+double Score(const Raag& raag, const Shares& shares, double sa_and_pa, const RaagLearning* learning,
+             int* foreign_svaras) {
   const RaagProfile* profile = nullptr;
   if (learning) {
     const auto found = learning->profiles.find(&raag);
@@ -154,7 +156,10 @@ double Score(const Raag& raag, const Shares& shares, double sa_and_pa, const Raa
     const bool essential =
         weight[svara] > 0 && std::find(raag.occasional.begin(), raag.occasional.end(), svara) == raag.occasional.end();
     if (essential && shares.held[svara] < kMissingShare) score -= kMissingPenalty;
-    if (weight[svara] == 0 && shares.held[svara] >= kMissingShare) score -= kMissingPenalty;
+    if (weight[svara] == 0 && shares.held[svara] >= kMissingShare) {
+      score -= kMissingPenalty;
+      ++*foreign_svaras;
+    }
     // Where the raag leaves svaras out going up or down, how much likelier the
     // moves are than with no direction.
     score += kDirectionWeight * (shares.up[svara] * std::log(up[svara] / likely[svara]) +
@@ -251,8 +256,8 @@ std::vector<RaagMatch> IdentifyRaag(std::span<const SteadyNote> notes, std::span
   std::vector<RaagMatch> best;
   ForEachSa(notes, passing, [&](const TonicCandidate& candidate, const Shares& shares) {
     for (const Raag& raag : Raags()) {
-      const RaagMatch match{&raag, candidate.frequency,
-                            Score(raag, shares, candidate.score, learning)};
+      RaagMatch match{&raag, candidate.frequency, 0, 0};
+      match.score = Score(raag, shares, candidate.score, learning, &match.foreign_svaras);
       auto known = std::find_if(best.begin(), best.end(), [&](const RaagMatch& m) { return m.raag == &raag; });
       if (known == best.end()) {
         best.push_back(match);
@@ -269,8 +274,9 @@ std::vector<RaagMatch> MatchRaag(std::span<const SteadyNote> notes, const Raag& 
                                  std::span<const SteadyNote> passing, const RaagLearning* learning) {
   std::vector<RaagMatch> matches;
   ForEachSa(notes, passing, [&](const TonicCandidate& candidate, const Shares& shares) {
-    matches.push_back({&raag, candidate.frequency,
-                       Score(raag, shares, candidate.score, learning)});
+    RaagMatch match{&raag, candidate.frequency, 0, 0};
+    match.score = Score(raag, shares, candidate.score, learning, &match.foreign_svaras);
+    matches.push_back(match);
   });
   std::sort(matches.begin(), matches.end(), Better);
   return matches;
@@ -317,6 +323,36 @@ RaagLearning LearningFromText(std::string_view text) {
     }
   }
   return learning;
+}
+
+std::vector<RaagMatch> RaagTracker::Update(std::vector<RaagMatch> matches, double now) {
+  if (matches.empty()) return matches;
+  auto leader = std::find_if(matches.begin(), matches.end(), [&](const RaagMatch& m) { return m.raag == leader_; });
+  bool change = leader == matches.end();
+  if (!change && matches[0].raag != leader_) {
+    // A foreign svara turning up for the leader is reason enough; otherwise
+    // the best must have led it clearly for a while.
+    if (leader->foreign_svaras > leader_foreign_) {
+      change = true;
+    } else if (matches[0].score - leader->score >= options_.margin) {
+      if (challenger_ != matches[0].raag) {
+        challenger_ = matches[0].raag;
+        challenger_since_ = now;
+      }
+      change = now - challenger_since_ >= options_.seconds;
+    } else {
+      challenger_ = nullptr;
+    }
+  }
+  if (change) {
+    leader_ = matches[0].raag;
+    leader_foreign_ = matches[0].foreign_svaras;
+    challenger_ = nullptr;
+    return matches;
+  }
+  leader_foreign_ = leader->foreign_svaras;
+  std::rotate(matches.begin(), leader, leader + 1);
+  return matches;
 }
 
 }  // namespace raagasense

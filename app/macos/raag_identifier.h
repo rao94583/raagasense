@@ -1,5 +1,7 @@
 // Names the raag of what's being listened to, from everything heard since
-// listening began, using what's been learned from labeled recordings.
+// listening began or the last start over, using what's been learned from
+// labeled recordings, and keeping its first guess unless there's good reason
+// to change (RaagTracker).
 #import <Foundation/Foundation.h>
 
 #include <string>
@@ -26,6 +28,9 @@ struct RSRaagGuesses {
 // is still being worked out, works out a new one in the background, then
 // calls done with it on the main thread. Starts over when listening does.
 - (void)update:(void (^)(const RSRaagGuesses& guesses))done;
+
+// Forgets what's been heard, for a new piece.
+- (void)startOver;
 
 // How many raags the learning has profiles for.
 @property(nonatomic, readonly) NSUInteger learnedRaags;
